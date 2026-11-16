@@ -26,8 +26,8 @@ export const LoginScreen: React.FC = () => {
   const { navigate, loginWithCredentials, resetPasswordByEmail, showToast } = useEduflow();
 
   const [mode, setMode] = useState<'login' | 'forgot' | 'sent' | 'reset'>('login');
-  const [identifier, setIdentifier] = useState('mahmoud@el-nokhba.eg');
-  const [password, setPassword] = useState('EduFlow@2026');
+  const [identifier, setIdentifier] = useState('hamed@hamed-elbailey.demo');
+  const [password, setPassword] = useState('Hamed3571');
   const [showPass, setShowPass] = useState(false);
   const [rememberMe, setRememberMe] = useState(true);
   const [loading, setLoading] = useState(false);
@@ -179,7 +179,7 @@ export const LoginScreen: React.FC = () => {
                   id="login-id"
                   dir="ltr"
                   className="text-right"
-                  placeholder="01001122334 أو name@center.eg"
+                  placeholder="name@hamed-elbailey.demo أو رقم الموبايل"
                   value={identifier}
                   onChange={(e) => {
                     setIdentifier(e.target.value);
@@ -246,16 +246,16 @@ export const LoginScreen: React.FC = () => {
               <div className="pt-4 border-t border-[#E2E8F0] space-y-3 text-center text-xs">
                 <div className="space-y-1.5">
                   <span className="text-[11px] font-semibold text-[#5B6B80] block">
-                    حسابات تجريبية (كلمة السر الموحدة: EduFlow@2026):
+                    دخول سريع لحسابات سنتر حامد البيلي:
                   </span>
                   <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
                     {[
-                      { role: UserRole.OWNER, email: 'mahmoud@el-nokhba.eg', label: 'المالك' },
-                      { role: UserRole.ADMIN, email: 'eman.admin@el-nokhba.eg', label: 'المدير' },
-                      { role: UserRole.ACCOUNTANT, email: 'adel.finance@el-nokhba.eg', label: 'المحاسب' },
-                      { role: UserRole.RECEPTIONIST, email: 'nada.desk@el-nokhba.eg', label: 'ريسبشن' },
-                      { role: UserRole.TEACHER, email: 'm.abdelsalam@el-nokhba.eg', label: 'المدرس' },
-                      { role: UserRole.PARENT, email: '01002349871', label: 'ولي أمر' },
+                      { role: UserRole.OWNER, email: 'hamed@hamed-elbailey.demo', pass: 'Hamed3571', label: 'المالك' },
+                      { role: UserRole.ADMIN, email: 'salma@hamed-elbailey.demo', pass: 'Salma3571', label: 'الإدارة' },
+                      { role: UserRole.ACCOUNTANT, email: 'mostafa@hamed-elbailey.demo', pass: 'Mostafa3571', label: 'المحاسب' },
+                      { role: UserRole.TEACHER, email: 'mohamed@hamed-elbailey.demo', pass: 'Mohamed3571', label: 'المدرس' },
+                      { role: UserRole.PARENT, email: 'mimi@hamed-elbailey.demo', pass: 'Mimi3571', label: 'ولي أمر' },
+                      { role: UserRole.STUDENT, email: 'mahmoud@hamed-elbailey.demo', pass: 'Mahmoud3571', label: 'الطالب' },
                     ].map((preset) => (
                       <button
                         key={preset.role}
@@ -264,9 +264,9 @@ export const LoginScreen: React.FC = () => {
                           setAuthError('');
                           setFieldErrors({});
                           setIdentifier(preset.email);
-                          setPassword('EduFlow@2026');
+                          setPassword(preset.pass);
                           setLoading(true);
-                          const res = await loginWithCredentials(preset.email, 'EduFlow@2026');
+                          const res = await loginWithCredentials(preset.email, preset.pass);
                           setLoading(false);
                           if (!res.ok) setAuthError(res.error || 'تعذر تسجيل الدخول.');
                         }}
@@ -462,17 +462,17 @@ export const OnboardingScreen: React.FC = () => {
   const [showSignupPass, setShowSignupPass] = useState(false);
 
   // Step 1: Account
-  const [ownerName, setOwnerName] = useState('أ. محمود عبد الرحمن');
-  const [ownerPhone, setOwnerPhone] = useState('01001122334');
-  const [ownerEmail, setOwnerEmail] = useState('mahmoud@el-nokhba.eg');
-  const [pass, setPass] = useState('EduFlow@2026');
-  const [passConfirm, setPassConfirm] = useState('EduFlow@2026');
+  const [ownerName, setOwnerName] = useState('');
+  const [ownerPhone, setOwnerPhone] = useState('');
+  const [ownerEmail, setOwnerEmail] = useState('');
+  const [pass, setPass] = useState('');
+  const [passConfirm, setPassConfirm] = useState('');
 
   // Step 2: Center Info
-  const [centerName, setCenterName] = useState('سنتر النخبة التعليمي');
+  const [centerName, setCenterName] = useState('');
   const [governorate, setGovernorate] = useState('القاهرة');
-  const [city, setCity] = useState('مدينة نصر');
-  const [centerPhone, setCenterPhone] = useState('01001122334');
+  const [city, setCity] = useState('');
+  const [centerPhone, setCenterPhone] = useState('');
   const [selectedStages, setSelectedStages] = useState<string[]>(['إعدادي', 'ثانوي']);
 
   // Step 3: First Setup (Rooms + Optional First Teacher)
@@ -536,7 +536,7 @@ export const OnboardingScreen: React.FC = () => {
             ? {
                 name: firstTeacherName.trim(),
                 subject: firstTeacherSubject,
-                phone: firstTeacherPhone.trim() || '01000000000',
+                phone: firstTeacherPhone.trim(),
               }
             : undefined,
         });

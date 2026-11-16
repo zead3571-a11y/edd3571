@@ -76,7 +76,7 @@ export const TakeAttendanceScreen: React.FC = () => {
     navigate,
   } = useEduflow();
 
-  const [sessionDate, setSessionDate] = useState('2026-11-12');
+  const [sessionDate, setSessionDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [search, setSearch] = useState('');
   const [entries, setEntries] = useState<AttendanceEntry[]>([]);
   const [readOnlySaved, setReadOnlySaved] = useState(false);
@@ -106,7 +106,7 @@ export const TakeAttendanceScreen: React.FC = () => {
   const [makeupModalOpen, setMakeupModalOpen] = useState(false);
   const [makeupGroupId, setMakeupGroupId] = useState(groups[0]?.id || '');
   const [makeupOrigSessionId, setMakeupOrigSessionId] = useState('');
-  const [makeupDate, setMakeupDate] = useState('2026-11-14');
+  const [makeupDate, setMakeupDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [makeupTime, setMakeupTime] = useState('4:00 م');
   const [makeupRoomId, setMakeupRoomId] = useState(rooms[0]?.id || '');
   const [makeupStudentIds, setMakeupStudentIds] = useState<string[]>([]);
@@ -393,12 +393,12 @@ export const TakeAttendanceScreen: React.FC = () => {
         </div>
       </div>
 
-      {noSessionsDemo ? (
+      {noSessionsDemo || sessions.length === 0 ? (
         <EmptyState
-          title="لا توجد حصص مجدولة لهذا اليوم"
-          description="جميع قاعات السنتر خالية حالياً. يمكنك مراجعة الجدول الأسبوعي أو سجل الحضور السابق."
-          actionLabel="عرض الجدول الأسبوعي"
-          onAction={() => navigate(ScreenId.SCHEDULE)}
+          title="لا توجد حصص مجدولة حالياً"
+          description="يمكنك إضافة مجموعة دراسية أولاً ثم إنشاء حصصها لبدء تسجيل الحضور ورصد مستحقات المدرسين."
+          actionLabel="عرض المجموعات والجدول"
+          onAction={() => navigate(ScreenId.GROUPS)}
         />
       ) : (
         <>
@@ -547,7 +547,7 @@ export const TakeAttendanceScreen: React.FC = () => {
                         <div>
                           <p className="text-sm font-bold text-[#1E293B]">{st.name}</p>
                           <p className="text-[11px] text-[#5B6B80] tabular-nums">
-                            ولي الأمر: {st.parentPhone}
+                            ولي الأمر: {st.parentPhone || st.parentName || 'غير مسجل'}
                           </p>
                         </div>
                       </div>
@@ -1391,8 +1391,9 @@ export const AttendanceHistoryScreen: React.FC = () => {
 
   const [groupFilter, setGroupFilter] = useState('all');
   const [studentFilter, setStudentFilter] = useState('all');
-  const [fromDate, setFromDate] = useState('2026-11-01');
-  const [toDate, setToDate] = useState('2026-11-30');
+  const currentMonthKey = new Date().toISOString().slice(0, 7);
+  const [fromDate, setFromDate] = useState(`${currentMonthKey}-01`);
+  const [toDate, setToDate] = useState(`${currentMonthKey}-28`);
   const [detailSession, setDetailSession] = useState<AttendanceSession | null>(null);
 
   const filteredSessions = useMemo(() => {

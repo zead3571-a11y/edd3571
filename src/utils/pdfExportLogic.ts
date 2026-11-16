@@ -12,6 +12,7 @@ import {
 import {
   calculateTeacherShare,
   computeAttendanceStats,
+  formatDateDDMMYYYY,
   formatEGP,
 } from './eduflowLogic';
 
@@ -193,24 +194,30 @@ export function buildFinancialReportPdf(params: {
       columns: [
         { key: 'teacherName', label: 'المدرس' },
         { key: 'contract', label: 'نظام التعاقد' },
-        { key: 'gross', label: 'إجمالي التحصيل', tabular: true },
+        { key: 'gross', label: 'إجمالي التحصيل / الحصص', tabular: true },
         { key: 'teacherShare', label: 'مستحق المدرس', tabular: true },
         { key: 'centerShare', label: 'حصة السنتر', align: 'left', tabular: true },
       ],
-      rows: teachers.map((t, idx) => {
-        const gross = [28400, 22100, 19500, 24000, 16800][idx % 5];
+      rows: teachers.map((t) => {
+        const tGroupIds = new Set(groups.filter((g) => g.teacherId === t.id).map((g) => g.id));
+        const gross = filteredPayments
+          .filter((p) => tGroupIds.has(p.groupId))
+          .reduce((sum, p) => sum + p.amount, 0);
         const split = calculateTeacherShare(
           gross,
           t.compensationType,
-          t.compensationValue
+          t.compensationValue,
+          0
         );
         return {
           teacherName: t.name,
           contract:
-            t.compensationType === 'percentage'
-              ? `نسبة ${t.compensationValue}%`
-              : `إيجار ثابت ${formatEGP(t.compensationValue)}`,
-          gross: formatEGP(gross),
+            t.compensationType === 'per_session'
+              ? `${formatEGP(t.compensationValue)} / حصة مكتملة`
+              : t.compensationType === 'percentage'
+                ? `نسبة ${t.compensationValue}%`
+                : `إيجار ثابت ${formatEGP(t.compensationValue)}`,
+          gross: t.compensationType === 'per_session' ? '0 حصة' : formatEGP(gross),
           teacherShare: formatEGP(split.teacherShare),
           centerShare: formatEGP(split.centerShare),
         };
@@ -241,15 +248,17 @@ export function buildFinancialReportPdf(params: {
     `• إجمالي المتأخرات: ${formatEGP(overdueTotal)}`,
   ].join('\n');
 
+  const todayStr = formatDateDDMMYYYY(new Date());
+
   return {
     kind: kindMap[focusTab],
-    documentCode: `FIN-${toDate.replace(/-/g, '') || '20261112'}`,
+    documentCode: `FIN-${toDate.replace(/-/g, '') || new Date().toISOString().slice(0, 10).replace(/-/g, '')}`,
     title: titleMap[focusTab],
     subtitle: `النطاق: ${selectedGroupName}`,
     periodLabel: `من ${fromDate || '—'} إلى ${toDate || '—'}`,
-    generatedAt: '12 نوفمبر 2026',
+    generatedAt: todayStr,
     centerName: centerSettings.name,
-    centerAddress: `${centerSettings.address}، ${centerSettings.city}، ${centerSettings.governorate}`,
+    centerAddress: [centerSettings.address, centerSettings.city, centerSettings.governorate].filter(Boolean).join('، '),
     centerPhone: centerSettings.phone,
     kpis: [
       { label: 'إجمالي المتحصلات', value: formatEGP(totalPaymentsAmount), tone: 'success' },
@@ -394,13 +403,13 @@ export function buildAttendanceHistoryPdf(params: {
 
   return {
     kind: 'attendance_history',
-    documentCode: `ATT-${toDate.replace(/-/g, '') || '20261112'}`,
+    documentCode: `ATT-${toDate.replace(/-/g, '') || new Date().toISOString().slice(0, 10).replace(/-/g, '')}`,
     title: 'سجل الحضور والانصراف الرسمي',
     subtitle,
     periodLabel: `من ${fromDate || '—'} إلى ${toDate || '—'}`,
-    generatedAt: '12 نوفمبر 2026',
+    generatedAt: formatDateDDMMYYYY(new Date()),
     centerName: centerSettings.name,
-    centerAddress: `${centerSettings.address}، ${centerSettings.city}، ${centerSettings.governorate}`,
+    centerAddress: [centerSettings.address, centerSettings.city, centerSettings.governorate].filter(Boolean).join('، '),
     centerPhone: centerSettings.phone,
     parentPhone: selectedStudent?.parentPhone,
     parentGreeting: selectedStudent
@@ -465,9 +474,9 @@ export function buildSessionAttendancePdf(params: {
     title: `كشف حضور الحصة: ${group?.name || 'مجموعة'}`,
     subtitle: `المدرس: ${teacher?.name || '—'} · الموعد: ${session.timeLabel}`,
     periodLabel: `تاريخ الحصة: ${session.date}`,
-    generatedAt: '12 نوفمبر 2026',
+    generatedAt: formatDateDDMMYYYY(new Date()),
     centerName: centerSettings.name,
-    centerAddress: `${centerSettings.address}، ${centerSettings.city}، ${centerSettings.governorate}`,
+    centerAddress: [centerSettings.address, centerSettings.city, centerSettings.governorate].filter(Boolean).join('، '),
     centerPhone: centerSettings.phone,
     kpis: [
       { label: 'حاضر', value: String(stats.present), tone: 'success' },
@@ -543,10 +552,10 @@ export function buildStudentParentReportPdf(params: {
     documentCode: `STD-${student.id.toUpperCase()}`,
     title: `تقرير متابعة الطالب لولي الأمر`,
     subtitle: `${student.name} — ${student.stage}`,
-    periodLabel: 'التقرير الشهري الشامل — نوفمبر 2026',
-    generatedAt: '12 نوفمبر 2026',
+    periodLabel: 'التقرير الشهري الشامل',
+    generatedAt: formatDateDDMMYYYY(new Date()),
     centerName: centerSettings.name,
-    centerAddress: `${centerSettings.address}، ${centerSettings.city}، ${centerSettings.governorate}`,
+    centerAddress: [centerSettings.address, centerSettings.city, centerSettings.governorate].filter(Boolean).join('، '),
     centerPhone: centerSettings.phone,
     parentPhone: student.parentPhone,
     parentGreeting: `السيد ولي الأمر / ${student.parentName} — يسعدنا مشاركة تقرير الأداء المالي والحضور والدرجات الخاص بالطالب/ة (${student.name}).`,

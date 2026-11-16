@@ -25,6 +25,7 @@ import {
 import {
   DAYS_ORDER,
   detectGroupConflicts,
+  formatDateDDMMYYYY,
   formatEGP,
   formatTimeRangeArabic,
   validatePaymentAmount,
@@ -43,6 +44,7 @@ export const StudentFormDrawer: React.FC = () => {
     students,
     stages,
     groups,
+    centerSettings,
     saveStudent,
     deactivateStudent,
     setSelectedStudentId,
@@ -131,17 +133,14 @@ export const StudentFormDrawer: React.FC = () => {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const nextErrors: Record<string, string> = {};
-    if (!name.trim() || name.trim().length < 5) {
-      nextErrors.name = 'يرجى إدخال الاسم الثلاثي للطالب على الأقل.';
+    if (!name.trim() || name.trim().length < 4) {
+      nextErrors.name = 'يرجى إدخال اسم الطالب كاملاً.';
     }
     if (!parentName.trim()) {
       nextErrors.parentName = 'اسم ولي الأمر مطلوب.';
     }
-    if (!/^01[0125][0-9]{8}$/.test(parentPhone.trim())) {
+    if (parentPhone.trim() && !/^01[0125][0-9]{8}$/.test(parentPhone.trim())) {
       nextErrors.parentPhone = 'أدخل رقم موبايل مصري صحيح مكون من 11 رقم (مثال: 01001234567).';
-    }
-    if (selectedGroupIds.length === 0) {
-      nextErrors.groups = 'اختر مجموعة واحدة على الأقل لتسجيل الطالب بها.';
     }
 
     if (Object.keys(nextErrors).length > 0) {
@@ -165,6 +164,7 @@ export const StudentFormDrawer: React.FC = () => {
             }
           : undefined;
 
+      const defaultFee = centerSettings.defaultStudentMonthlyFee ?? 400;
       const saved = saveStudent(
         {
           name: name.trim(),
@@ -173,7 +173,7 @@ export const StudentFormDrawer: React.FC = () => {
           parentName: parentName.trim(),
           parentPhone: parentPhone.trim(),
           groupIds: selectedGroupIds,
-          monthlyFeeOverride: feeOverride ? Number(feeOverride) : undefined,
+          monthlyFeeOverride: feeOverride ? Number(feeOverride) : (selectedGroupIds.length === 0 ? defaultFee : undefined),
           standingDiscountConfig,
           standingDiscount:
             standingDiscountConfig?.type === 'waiver' ? standingDiscountConfig.value : undefined,
@@ -184,7 +184,7 @@ export const StudentFormDrawer: React.FC = () => {
       if (noteText.trim() && saved) {
         saved.notes.unshift({
           id: `n-${Date.now()}`,
-          date: '12 نوفمبر 2026',
+          date: formatDateDDMMYYYY(new Date()),
           author: 'إدارة السنتر',
           text: noteText.trim(),
         });
@@ -219,7 +219,7 @@ export const StudentFormDrawer: React.FC = () => {
           <Field label="اسم الطالب رباعياً" htmlFor="st-name" required error={errors.name}>
             <TextInput
               id="st-name"
-              placeholder="مثال: يوسف أحمد محمود عبد اللطيف"
+              placeholder="مثال: محمود ميمي"
               value={name}
               onChange={(e) => {
                 setName(e.target.value);
@@ -271,17 +271,16 @@ export const StudentFormDrawer: React.FC = () => {
             </Field>
 
             <Field
-              label="موبايل ولي الأمر"
+              label="موبايل ولي الأمر (اختياري)"
               htmlFor="st-parent-phone"
-              required
               error={errors.parentPhone}
-              hint="تُرسل تنبيهات الغياب وتأخر السداد إلى هذا الرقم."
+              hint="تُرسل تنبيهات الغياب وتأخر السداد إلى هذا الرقم عند تسجيله."
             >
               <TextInput
                 id="st-parent-phone"
                 dir="ltr"
                 className="text-right tabular-nums"
-                placeholder="01002349871"
+                placeholder="01XXXXXXXXX"
                 value={parentPhone}
                 onChange={(e) => {
                   setParentPhone(e.target.value);
@@ -317,41 +316,47 @@ export const StudentFormDrawer: React.FC = () => {
             </div>
           )}
 
-          <Field label="المجموعات المسجل بها" required error={errors.groups}>
-            <div className="border border-[#E2E8F0] rounded-[8px] divide-y divide-[#E2E8F0] max-h-48 overflow-y-auto">
-              {groups.map((g) => {
-                const checked = selectedGroupIds.includes(g.id);
-                return (
-                  <label
-                    key={g.id}
-                    className={`flex items-center justify-between px-3.5 py-2.5 text-xs cursor-pointer transition-colors ${
-                      checked ? 'bg-[#0F766E]/5' : 'hover:bg-slate-50'
-                    }`}
-                  >
-                    <div className="flex items-center gap-2.5">
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={() => {
-                          toggleGroup(g.id);
-                          setErrors((p) => ({ ...p, groups: '' }));
-                        }}
-                        className="w-4 h-4 accent-[#0F766E] rounded"
-                      />
-                      <div>
-                        <p className="font-bold text-[#1E293B]">{g.name}</p>
-                        <p className="text-[#5B6B80]">
-                          {g.days.join('، ')} · {formatTimeRangeArabic(g.startTime, g.endTime)}
-                        </p>
+          <Field label="المجموعات المسجل بها (اختياري)" error={errors.groups}>
+            {groups.length === 0 ? (
+              <div className="p-3.5 rounded-[8px] bg-[#F4F7FA] border border-[#E2E8F0] text-xs text-[#5B6B80]">
+                لا توجد مجموعات مضافة بعد — يمكنك حفظ الطالب الآن بالرسوم الشهرية الافتراضية ({formatEGP(centerSettings.defaultStudentMonthlyFee ?? 400)}) ثم إلحاقه بالمجموعات لاحقاً.
+              </div>
+            ) : (
+              <div className="border border-[#E2E8F0] rounded-[8px] divide-y divide-[#E2E8F0] max-h-48 overflow-y-auto">
+                {groups.map((g) => {
+                  const checked = selectedGroupIds.includes(g.id);
+                  return (
+                    <label
+                      key={g.id}
+                      className={`flex items-center justify-between px-3.5 py-2.5 text-xs cursor-pointer transition-colors ${
+                        checked ? 'bg-[#0F766E]/5' : 'hover:bg-slate-50'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => {
+                            toggleGroup(g.id);
+                            setErrors((p) => ({ ...p, groups: '' }));
+                          }}
+                          className="w-4 h-4 accent-[#0F766E] rounded"
+                        />
+                        <div>
+                          <p className="font-bold text-[#1E293B]">{g.name}</p>
+                          <p className="text-[#5B6B80]">
+                            {g.days.join('، ')} · {formatTimeRangeArabic(g.startTime, g.endTime)}
+                          </p>
+                        </div>
                       </div>
-                    </div>
-                    <span className="font-bold text-[#0F2A4A] tabular-nums">
-                      {formatEGP(g.monthlyPrice)}
-                    </span>
-                  </label>
-                );
-              })}
-            </div>
+                      <span className="font-bold text-[#0F2A4A] tabular-nums">
+                        {formatEGP(g.monthlyPrice)}
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            )}
           </Field>
 
           {selectedGroupObjects.length > 0 && (
@@ -379,7 +384,7 @@ export const StudentFormDrawer: React.FC = () => {
               id="st-fee-override"
               type="number"
               min="0"
-              placeholder="مثال: 850"
+              placeholder={`مثال: ${centerSettings.defaultStudentMonthlyFee ?? 400}`}
               value={feeOverride}
               onChange={(e) => setFeeOverride(e.target.value)}
               className="tabular-nums"
@@ -544,7 +549,7 @@ export const RecordPaymentDrawerAndReceipt: React.FC = () => {
   const [selectedInvoiceId, setSelectedInvoiceId] = useState<string>('');
   const [amountStr, setAmountStr] = useState<string>('');
   const [method, setMethod] = useState<PaymentRecord['method']>('نقدي');
-  const [date, setDate] = useState<string>('2026-11-12');
+  const [date, setDate] = useState<string>(() => new Date().toISOString().slice(0, 10));
   const [note, setNote] = useState<string>('');
   const [errorMsg, setErrorMsg] = useState<string>('');
   const [receiptFormat, setReceiptFormat] = useState<'a5' | 'thermal80'>(
@@ -698,11 +703,11 @@ export const RecordPaymentDrawerAndReceipt: React.FC = () => {
       kind: 'financial_summary',
       documentCode: activeReceipt.receiptNumber,
       title: `إيصال سداد رسمي #${activeReceipt.receiptNumber}`,
-      subtitle: `${receiptStudent?.name || ''} — ${receiptGroup?.name || ''}`,
+      subtitle: `${receiptStudent?.name || ''} — ${receiptGroup?.name || (activeReceipt.groupId === 'general' ? 'اشتراك شهري عام' : '')}`,
       periodLabel: `تاريخ التحصيل: ${activeReceipt.date}`,
       generatedAt: activeReceipt.date,
       centerName: centerSettings.name,
-      centerAddress: `${centerSettings.address}، ${centerSettings.city}`,
+      centerAddress: [centerSettings.address, centerSettings.city].filter(Boolean).join('، '),
       centerPhone: centerSettings.phone,
       parentPhone: receiptStudent?.parentPhone,
       kpis: [
@@ -724,7 +729,7 @@ export const RecordPaymentDrawerAndReceipt: React.FC = () => {
           rows: [
             { field: 'رقم الإيصال', val: activeReceipt.receiptNumber },
             { field: 'الطالب', val: `${receiptStudent?.name || ''} (${receiptStudent?.code || ''})` },
-            { field: 'المجموعة', val: receiptGroup?.name || '' },
+            { field: 'المجموعة', val: receiptGroup?.name || (activeReceipt.groupId === 'general' ? 'اشتراك شهري عام' : '—') },
             { field: 'الشهر', val: receiptInvoice?.month || '—' },
             { field: 'السعر الأساسي', val: formatEGP(receiptInvoice?.baseAmount ?? activeReceipt.amount) },
             ...(receiptInvoice?.discountLines || []).map((d) => ({
@@ -827,7 +832,7 @@ export const RecordPaymentDrawerAndReceipt: React.FC = () => {
                         />
                         <div>
                           <p className="text-xs font-bold text-[#1E293B]">
-                            {grp?.name || 'مجموعة دراسية'} — {inv.month}
+                            {grp?.name || (inv.groupId === 'general' ? 'اشتراك شهري عام' : 'مجموعة دراسية')} — {inv.month}
                           </p>
                           <p className="text-[11px] text-[#5B6B80] tabular-nums">
                             رقم الفاتورة: {inv.invoiceNumber} · الصافي {formatEGP(inv.total)}
@@ -1015,7 +1020,9 @@ export const RecordPaymentDrawerAndReceipt: React.FC = () => {
                       {centerSettings.receiptSettings.headerNote}
                     </p>
                   )}
-                  <p className="text-[11px] text-[#5B6B80] tabular-nums">{centerSettings.phone}</p>
+                  {centerSettings.phone && (
+                    <p className="text-[11px] text-[#5B6B80] tabular-nums">{centerSettings.phone}</p>
+                  )}
                   <p className="font-bold text-[#0F2A4A] tabular-nums pt-1">
                     إيصال #{activeReceipt.receiptNumber}
                   </p>
@@ -1036,7 +1043,9 @@ export const RecordPaymentDrawerAndReceipt: React.FC = () => {
                   </div>
                   <div className="flex justify-between">
                     <span className="text-[#5B6B80]">المجموعة:</span>
-                    <span className="font-semibold">{receiptGroup?.name}</span>
+                    <span className="font-semibold">
+                      {receiptGroup?.name || (activeReceipt.groupId === 'general' ? 'اشتراك شهري عام' : '—')}
+                    </span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-[#5B6B80]">الطريقة:</span>
@@ -1121,7 +1130,9 @@ export const RecordPaymentDrawerAndReceipt: React.FC = () => {
                   </div>
                   <div className="flex justify-between py-1.5 border-b border-slate-100">
                     <span className="text-[#5B6B80]">المجموعة الدراسية:</span>
-                    <span className="font-semibold text-[#1E293B]">{receiptGroup?.name}</span>
+                    <span className="font-semibold text-[#1E293B]">
+                      {receiptGroup?.name || (activeReceipt.groupId === 'general' ? 'اشتراك شهري عام' : '—')}
+                    </span>
                   </div>
                   <div className="flex justify-between py-1.5 border-b border-slate-100">
                     <span className="text-[#5B6B80]">طريقة الدفع:</span>
@@ -1160,7 +1171,9 @@ export const RecordPaymentDrawerAndReceipt: React.FC = () => {
                 <div className="pt-4 mt-2 border-t border-[#E2E8F0] flex items-end justify-between text-xs text-[#5B6B80]">
                   <div>
                     <p>المحصّل: {activeReceipt.recordedBy}</p>
-                    <p className="text-[11px] mt-0.5">هاتف السنتر: {centerSettings.phone}</p>
+                    {centerSettings.phone && (
+                      <p className="text-[11px] mt-0.5">هاتف السنتر: {centerSettings.phone}</p>
+                    )}
                     {centerSettings.receiptSettings?.footerNote && (
                       <p className="text-[11px] text-[#0F2A4A] font-semibold mt-1">
                         {centerSettings.receiptSettings.footerNote}
@@ -1208,7 +1221,7 @@ export const GroupFormDrawer: React.FC = () => {
 
   const [activeTab, setActiveTab] = useState<'details' | 'roster'>('details');
   const [name, setName] = useState('');
-  const [subject, setSubject] = useState('فيزياء');
+  const [subject, setSubject] = useState('اللغة الفرنسية');
   const [teacherId, setTeacherId] = useState(teachers[0]?.id || '');
   const [stage, setStage] = useState(stages[6] || 'الصف الثالث الثانوي');
   const [days, setDays] = useState<DayOfWeek[]>(['السبت', 'الثلاثاء']);
@@ -1216,8 +1229,8 @@ export const GroupFormDrawer: React.FC = () => {
   const [endTime, setEndTime] = useState('18:00');
   const [roomId, setRoomId] = useState(rooms[0]?.id || '');
   const [capacity, setCapacity] = useState('45');
-  const [monthlyPrice, setMonthlyPrice] = useState('450');
-  const [startDate, setStartDate] = useState('2026-11-15');
+  const [monthlyPrice, setMonthlyPrice] = useState('400');
+  const [startDate, setStartDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [rosterIds, setRosterIds] = useState<string[]>([]);
   const [rosterQuery, setRosterQuery] = useState('');
   const [formError, setFormError] = useState('');
@@ -1243,7 +1256,7 @@ export const GroupFormDrawer: React.FC = () => {
       );
     } else {
       setName('');
-      setSubject('فيزياء');
+      setSubject('اللغة الفرنسية');
       setTeacherId(teachers[0]?.id || '');
       setStage(stages[6] || 'الصف الثالث الثانوي');
       setDays(prefilledSlot?.day ? [prefilledSlot.day as DayOfWeek] : ['السبت', 'الثلاثاء']);
@@ -1253,8 +1266,8 @@ export const GroupFormDrawer: React.FC = () => {
       setEndTime(`${String(Math.min(22, startHour + 2)).padStart(2, '0')}:00`);
       setRoomId(prefilledSlot?.roomId || rooms[0]?.id || '');
       setCapacity('40');
-      setMonthlyPrice('450');
-      setStartDate('2026-11-15');
+      setMonthlyPrice('400');
+      setStartDate(new Date().toISOString().slice(0, 10));
       setRosterIds([]);
     }
   }, [groupDrawerOpen, editingGroup, prefilledSlot, teachers, rooms, stages, students]);
@@ -1394,7 +1407,7 @@ export const GroupFormDrawer: React.FC = () => {
             <Field label="اسم المجموعة" htmlFor="grp-name" required>
               <TextInput
                 id="grp-name"
-                placeholder="مثال: فيزياء - ثالثة ثانوي (مجموعة ج)"
+                placeholder="مثال: اللغة الفرنسية - ثالثة ثانوي"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
               />
@@ -1402,7 +1415,7 @@ export const GroupFormDrawer: React.FC = () => {
             <Field label="المادة الدراسية" htmlFor="grp-subject" required>
               <TextInput
                 id="grp-subject"
-                placeholder="مثال: فيزياء"
+                placeholder="مثال: اللغة الفرنسية"
                 value={subject}
                 onChange={(e) => setSubject(e.target.value)}
               />

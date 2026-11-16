@@ -21,7 +21,7 @@ import {
   User,
 } from 'lucide-react';
 import { useEduflow } from '../../context/EduflowContext';
-import { ScreenId, StudentDeviceSession } from '../../types/eduflow';
+import { ScreenId, StudentDeviceSession, UserRole } from '../../types/eduflow';
 import {
   Button,
   Card,
@@ -233,10 +233,15 @@ export const StudentLoginScreen: React.FC = () => {
                 منصة الطالب غير مفعّلة حالياً
               </h2>
               <p className="text-xs text-[#5B6B80] leading-relaxed">
-                بوابة الطلاب مغلقة حالياً من إعدادات السنتر أو غير مشمولة في الباقة النشطة. يرجى التواصل مع إدارة {centerSettings.name} على الرقم{' '}
-                <span className="font-bold text-[#0F2A4A] tabular-nums" dir="ltr">
-                  {centerSettings.phone}
-                </span>
+                بوابة الطلاب مغلقة حالياً من إعدادات السنتر أو غير مشمولة في الباقة النشطة. يرجى التواصل مع إدارة {centerSettings.name}
+                {centerSettings.phone ? (
+                  <>
+                    {' '}على الرقم{' '}
+                    <span className="font-bold text-[#0F2A4A] tabular-nums" dir="ltr">
+                      {centerSettings.phone}
+                    </span>
+                  </>
+                ) : null}
                 .
               </p>
               <div className="pt-2 flex justify-center gap-2">
@@ -355,15 +360,17 @@ export const StudentLoginScreen: React.FC = () => {
                     <div className="p-3.5 rounded-[10px] bg-[#F4F7FA] border border-[#E2E8F0] text-xs text-[#1E293B] space-y-2">
                       <p className="font-bold text-[#0F2A4A]">تواصل مع إدارة السنتر</p>
                       <p className="text-[#5B6B80] leading-relaxed">
-                        حفاظاً على أمان حسابك، لا يمكن استرجاع الكود ذاتياً. تواصل مع مكتب الاستقبال في {centerSettings.name} لإصدار بطاقة كود دخول جديدة:
+                        حفاظاً على أمان حسابك، لا يمكن استرجاع الكود ذاتياً. تواصل مع مكتب الاستقبال في {centerSettings.name} لإصدار بطاقة كود دخول جديدة{centerSettings.phone ? ':' : '.'}
                       </p>
-                      <a
-                        href={`tel:${centerSettings.phone}`}
-                        className="inline-flex items-center gap-1.5 font-bold text-[#0F766E] tabular-nums"
-                      >
-                        <Phone className="w-3.5 h-3.5" />
-                        <span dir="ltr">{centerSettings.phone}</span>
-                      </a>
+                      {centerSettings.phone && (
+                        <a
+                          href={`tel:${centerSettings.phone}`}
+                          className="inline-flex items-center gap-1.5 font-bold text-[#0F766E] tabular-nums"
+                        >
+                          <Phone className="w-3.5 h-3.5" />
+                          <span dir="ltr">{centerSettings.phone}</span>
+                        </a>
+                      )}
                     </div>
                   )}
                 </form>
@@ -503,6 +510,7 @@ export const StudentLoginScreen: React.FC = () => {
 // 23) Student Portal Shell (Standalone mobile-first layout, 5 bottom tabs)
 export const StudentPortalScreen: React.FC = () => {
   const {
+    authSession,
     studentAuthSession,
     studentPortalAvailable,
     centerSettings,
@@ -515,6 +523,7 @@ export const StudentPortalScreen: React.FC = () => {
     changeStudentPortalPin,
     revokeSingleStudentPortalSession,
     revokeAllStudentPortalSessions,
+    logout,
     logoutStudent,
     navigate,
   } = useEduflow();
@@ -530,10 +539,17 @@ export const StudentPortalScreen: React.FC = () => {
   const [pinSuccess, setPinSuccess] = useState('');
   const [pinSaving, setPinSaving] = useState(false);
 
+  const isEmailStudentSession = Boolean(
+    !studentAuthSession && authSession?.role === UserRole.STUDENT
+  );
+  const effectiveStudentId =
+    studentAuthSession?.studentId ||
+    (authSession?.role === UserRole.STUDENT ? authSession.studentId : undefined);
+
   const student = useMemo(() => {
-    if (!studentAuthSession) return students[0];
-    return students.find((s) => s.id === studentAuthSession.studentId) || students[0];
-  }, [students, studentAuthSession]);
+    if (!effectiveStudentId) return undefined;
+    return students.find((s) => s.id === effectiveStudentId);
+  }, [students, effectiveStudentId]);
 
   const studentGroups = useMemo(() => {
     if (!student) return [];
@@ -583,6 +599,14 @@ export const StudentPortalScreen: React.FC = () => {
       .sort((a, b) => new Date(b.lastSeenAt).getTime() - new Date(a.lastSeenAt).getTime());
   }, [studentSessions, student]);
 
+  const handlePortalLogout = () => {
+    if (studentAuthSession) {
+      logoutStudent();
+    } else {
+      logout();
+    }
+  };
+
   if (!studentPortalAvailable) {
     return (
       <div className="min-h-screen bg-[#F4F7FA] flex items-center justify-center p-4">
@@ -592,19 +616,24 @@ export const StudentPortalScreen: React.FC = () => {
           <p className="text-xs text-[#5B6B80]">
             تم إيقاف منصة الطالب من إعدادات {centerSettings.name}. تواصل مع الإدارة لمزيد من التفاصيل.
           </p>
-          <Button onClick={logoutStudent}>العودة لصفحة الدخول</Button>
+          <Button onClick={handlePortalLogout}>العودة لصفحة الدخول</Button>
         </Card>
       </div>
     );
   }
 
-  if (!studentAuthSession || !student) {
+  if ((!studentAuthSession && !isEmailStudentSession) || !student) {
     return (
       <div className="min-h-screen bg-[#F4F7FA] flex items-center justify-center p-4">
         <Card className="max-w-md w-full p-6 text-center space-y-3">
           <h1 className="text-lg font-bold text-[#0F2A4A]">انتهت جلسة الطالب</h1>
-          <p className="text-xs text-[#5B6B80]">يرجى تسجيل الدخول بكود الطالب للمتابعة.</p>
-          <Button onClick={() => navigate(ScreenId.STUDENT_LOGIN)}>صفحة دخول الطالب</Button>
+          <p className="text-xs text-[#5B6B80]">يرجى تسجيل الدخول للمتابعة إلى منصة الطالب.</p>
+          <div className="flex flex-wrap justify-center gap-2">
+            <Button onClick={() => navigate(ScreenId.STUDENT_LOGIN)}>دخول بكود الطالب</Button>
+            <Button variant="secondary" onClick={() => navigate(ScreenId.LOGIN)}>
+              دخول بالبريد الإلكتروني
+            </Button>
+          </div>
         </Card>
       </div>
     );
@@ -662,7 +691,7 @@ export const StudentPortalScreen: React.FC = () => {
 
           <button
             type="button"
-            onClick={logoutStudent}
+            onClick={handlePortalLogout}
             className="inline-flex items-center gap-1.5 px-3 py-2 rounded-[8px] border border-[#E2E8F0] text-xs font-bold text-[#991B1B] hover:bg-red-50 cursor-pointer shrink-0"
           >
             <LogOut className="w-3.5 h-3.5" />
@@ -977,18 +1006,19 @@ export const StudentPortalScreen: React.FC = () => {
               <div className="pt-2 border-t border-[#E2E8F0] grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
                 <div>
                   <span className="text-[#5B6B80]">ولي الأمر: </span>
-                  <strong className="text-[#0F2A4A]">{student.parentName}</strong>
+                  <strong className="text-[#0F2A4A]">{student.parentName || '—'}</strong>
                 </div>
                 <div>
                   <span className="text-[#5B6B80]">هاتف ولي الأمر: </span>
                   <strong className="text-[#0F2A4A] tabular-nums" dir="ltr">
-                    {student.parentPhone}
+                    {student.parentPhone || 'غير مسجل'}
                   </strong>
                 </div>
               </div>
             </Card>
 
-            {/* Change PIN Card */}
+            {/* Change PIN Card (when logged in via student access code) */}
+            {studentAuthSession && (
             <Card className="p-5 space-y-4">
               <div className="flex items-center justify-between">
                 <h3 className="text-base font-bold text-[#0F2A4A]">تغيير رمز المرور (PIN)</h3>
@@ -1068,76 +1098,81 @@ export const StudentPortalScreen: React.FC = () => {
                 </Button>
               </form>
             </Card>
+            )}
 
-            {/* Active Devices Card */}
+            {/* Active Devices / Account Logout Card */}
             <Card className="p-5 space-y-4">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <h3 className="text-base font-bold text-[#0F2A4A]">
-                    الأجهزة النشطة ({activeDevices.length} / {centerSettings.studentMaxDevices || 2})
-                  </h3>
-                  <p className="text-xs text-[#5B6B80]">
-                    جلسة الدخول تستمر لمدة {centerSettings.studentSessionDays || 7} أيام على كل جهاز
-                  </p>
-                </div>
-                {activeDevices.length > 0 && (
-                  <Button
-                    size="sm"
-                    variant="destructive"
-                    onClick={() => revokeAllStudentPortalSessions(student.id)}
-                  >
-                    تسجيل الخروج من جميع الأجهزة
-                  </Button>
-                )}
-              </div>
-
-              <div className="space-y-2.5">
-                {activeDevices.map((dev) => {
-                  const isCurrent = dev.id === studentAuthSession.studentSessionId;
-                  return (
-                    <div
-                      key={dev.id}
-                      className="p-3.5 rounded-[10px] bg-[#F4F7FA] border border-[#E2E8F0] flex flex-wrap items-center justify-between gap-3"
-                    >
-                      <div className="flex items-center gap-2.5">
-                        {dev.deviceLabel.includes('موبايل') ? (
-                          <Smartphone className="w-4 h-4 text-[#0F766E]" />
-                        ) : (
-                          <Laptop className="w-4 h-4 text-[#0F2A4A]" />
-                        )}
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs font-bold text-[#0F2A4A]">
-                              {dev.deviceLabel}
-                            </span>
-                            {isCurrent && <StatusChip tone="success" label="هذا الجهاز" />}
-                          </div>
-                          <p className="text-[11px] text-[#5B6B80] tabular-nums">
-                            دخول: {formatIsoToDDMMYYYY(dev.createdAt)} · انتهاء:{' '}
-                            {formatIsoToDDMMYYYY(dev.expiresAt)}
-                          </p>
-                        </div>
-                      </div>
+              {studentAuthSession && (
+                <>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <h3 className="text-base font-bold text-[#0F2A4A]">
+                        الأجهزة النشطة ({activeDevices.length} / {centerSettings.studentMaxDevices || 2})
+                      </h3>
+                      <p className="text-xs text-[#5B6B80]">
+                        جلسة الدخول تستمر لمدة {centerSettings.studentSessionDays || 7} أيام على كل جهاز
+                      </p>
+                    </div>
+                    {activeDevices.length > 0 && (
                       <Button
                         size="sm"
-                        variant="secondary"
-                        onClick={() => revokeSingleStudentPortalSession(dev.id)}
+                        variant="destructive"
+                        onClick={() => revokeAllStudentPortalSessions(student.id)}
                       >
-                        إنهاء الجلسة
+                        تسجيل الخروج من جميع الأجهزة
                       </Button>
-                    </div>
-                  );
-                })}
-              </div>
+                    )}
+                  </div>
 
-              <div className="pt-2 border-t border-[#E2E8F0]">
+                  <div className="space-y-2.5">
+                    {activeDevices.map((dev) => {
+                      const isCurrent = dev.id === studentAuthSession.studentSessionId;
+                      return (
+                        <div
+                          key={dev.id}
+                          className="p-3.5 rounded-[10px] bg-[#F4F7FA] border border-[#E2E8F0] flex flex-wrap items-center justify-between gap-3"
+                        >
+                          <div className="flex items-center gap-2.5">
+                            {dev.deviceLabel.includes('موبايل') ? (
+                              <Smartphone className="w-4 h-4 text-[#0F766E]" />
+                            ) : (
+                              <Laptop className="w-4 h-4 text-[#0F2A4A]" />
+                            )}
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs font-bold text-[#0F2A4A]">
+                                  {dev.deviceLabel}
+                                </span>
+                                {isCurrent && <StatusChip tone="success" label="هذا الجهاز" />}
+                              </div>
+                              <p className="text-[11px] text-[#5B6B80] tabular-nums">
+                                دخول: {formatIsoToDDMMYYYY(dev.createdAt)} · انتهاء:{' '}
+                                {formatIsoToDDMMYYYY(dev.expiresAt)}
+                              </p>
+                            </div>
+                          </div>
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => revokeSingleStudentPortalSession(dev.id)}
+                          >
+                            إنهاء الجلسة
+                          </Button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+
+              <div className={studentAuthSession ? 'pt-2 border-t border-[#E2E8F0]' : ''}>
                 <Button
                   variant="secondary"
                   icon={<LogOut className="w-4 h-4 text-[#991B1B]" />}
-                  onClick={logoutStudent}
+                  onClick={handlePortalLogout}
                   className="w-full"
                 >
-                  تسجيل الخروج من هذا الجهاز
+                  تسجيل الخروج من الحساب
                 </Button>
               </div>
             </Card>

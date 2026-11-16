@@ -12,6 +12,7 @@ import {
   FaceTemplateRecord,
   FileAssetRecord,
   Group,
+  Guardian,
   Invoice,
   MessageTemplate,
   OutboxMessage,
@@ -21,6 +22,7 @@ import {
   SettlementRecord,
   Student,
   StudentDeviceSession,
+  StudentGuardianLink,
   StudentPortalAccount,
   SystemUser,
   Teacher,
@@ -39,6 +41,7 @@ import {
   INITIAL_FACE_TEMPLATES,
   INITIAL_FILE_ASSETS,
   INITIAL_GROUPS,
+  INITIAL_GUARDIANS,
   INITIAL_INVOICES,
   INITIAL_MESSAGES,
   INITIAL_NOTIFICATIONS,
@@ -49,6 +52,7 @@ import {
   INITIAL_SETTLEMENTS,
   INITIAL_STUDENTS,
   INITIAL_STUDENT_ACCOUNTS,
+  INITIAL_STUDENT_GUARDIANS,
   INITIAL_STUDENT_SESSIONS,
   INITIAL_TEACHERS,
   INITIAL_TEMPLATES,
@@ -57,11 +61,13 @@ import {
   STAGES_LIST,
 } from './seedData';
 
-export const CURRENT_SCHEMA_VERSION = 1;
+export const CURRENT_SCHEMA_VERSION = 2;
 
 export type EntityKey =
   | 'centers'
   | 'users'
+  | 'guardians'
+  | 'studentGuardians'
   | 'students'
   | 'teachers'
   | 'groups'
@@ -88,6 +94,8 @@ export type EntityKey =
 export interface EntityCollectionsMap {
   centers: Center[];
   users: SystemUser[];
+  guardians: Guardian[];
+  studentGuardians: StudentGuardianLink[];
   students: Student[];
   teachers: Teacher[];
   groups: Group[];
@@ -130,6 +138,8 @@ export interface EduflowBackupPayload {
 export const ALL_ENTITY_KEYS: EntityKey[] = [
   'centers',
   'users',
+  'guardians',
+  'studentGuardians',
   'students',
   'teachers',
   'groups',
@@ -162,6 +172,8 @@ export function createInitialCollections(): EntityCollectionsMap {
   return deepClone({
     centers: INITIAL_CENTERS,
     users: INITIAL_USERS,
+    guardians: INITIAL_GUARDIANS,
+    studentGuardians: INITIAL_STUDENT_GUARDIANS,
     students: INITIAL_STUDENTS,
     teachers: INITIAL_TEACHERS,
     groups: INITIAL_GROUPS,
@@ -196,8 +208,8 @@ export function createInitialMeta(): EduflowMetaMap {
 }
 
 /**
- * Migrates persisted or restored snapshots from older schema versions to CURRENT_SCHEMA_VERSION
- * and backfills missing Phase 1B fields (centerId, student code, fullName/parent, compensation, invoice fields).
+ * Migrates persisted or restored snapshots from older schema versions to CURRENT_SCHEMA_VERSION.
+ * Any v1 snapshot containing only legacy center-1 demo data is safely replaced with سنتر حامد البيلي.
  */
 export function migrateSnapshot(
   rawCollections: Partial<EntityCollectionsMap>,
@@ -207,9 +219,28 @@ export function migrateSnapshot(
   const defaults = createInitialCollections();
   const defaultMeta = createInitialMeta();
 
+  // If upgrading from v1 legacy "center-1" seed snapshot, cleanly reset to سنتر حامد البيلي v2 seed
+  const isLegacyCenter1Snapshot =
+    fromVersion < 2 &&
+    Array.isArray(rawCollections.centers) &&
+    rawCollections.centers.length > 0 &&
+    rawCollections.centers.every((c) => c.id === 'center-1');
+
+  if (isLegacyCenter1Snapshot) {
+    return {
+      schemaVersion: CURRENT_SCHEMA_VERSION,
+      collections: defaults,
+      meta: defaultMeta,
+    };
+  }
+
   const merged: EntityCollectionsMap = {
     centers: Array.isArray(rawCollections.centers) ? rawCollections.centers : defaults.centers,
     users: Array.isArray(rawCollections.users) ? rawCollections.users : defaults.users,
+    guardians: Array.isArray(rawCollections.guardians) ? rawCollections.guardians : defaults.guardians,
+    studentGuardians: Array.isArray(rawCollections.studentGuardians)
+      ? rawCollections.studentGuardians
+      : defaults.studentGuardians,
     students: Array.isArray(rawCollections.students) ? rawCollections.students : defaults.students,
     teachers: Array.isArray(rawCollections.teachers) ? rawCollections.teachers : defaults.teachers,
     groups: Array.isArray(rawCollections.groups) ? rawCollections.groups : defaults.groups,
@@ -256,7 +287,6 @@ export function migrateSnapshot(
       : defaults.fileAssets,
   };
 
-  // Backfill v0 / partial records into v1 canonical shapes
   if (fromVersion <= CURRENT_SCHEMA_VERSION) {
     merged.students = merged.students.map((st, idx) => {
       const fullName = st.fullName || st.name;
@@ -271,7 +301,7 @@ export function migrateSnapshot(
         parent: { name: parentName, phone: parentPhone },
         parentName,
         parentPhone,
-        createdAt: st.createdAt || '2026-09-01T09:00:00.000Z',
+        createdAt: st.createdAt || '2026-11-16T00:00:00.000Z',
       };
     });
 
@@ -282,7 +312,9 @@ export function migrateSnapshot(
         t.compensation ||
         (t.compensationType === 'fixed_rent'
           ? { type: 'rent', rentAmount: t.compensationValue }
-          : { type: 'percent', centerPercent: Math.max(0, 100 - t.compensationValue) }),
+          : t.compensationType === 'per_session'
+            ? { type: 'per_session', perSessionAmount: t.compensationValue }
+            : { type: 'percent', centerPercent: Math.max(0, 100 - t.compensationValue) }),
     }));
 
     const roomMap = new Map(merged.rooms.map((r) => [r.id, r.name]));
@@ -306,7 +338,7 @@ export function migrateSnapshot(
       baseAmount: typeof inv.baseAmount === 'number' ? inv.baseAmount : inv.total,
       discountLines: Array.isArray(inv.discountLines) ? inv.discountLines : [],
       netAmount: typeof inv.netAmount === 'number' ? inv.netAmount : inv.total,
-      createdAt: inv.createdAt || '2026-11-01T09:00:00.000Z',
+      createdAt: inv.createdAt || '2026-11-16T00:00:00.000Z',
     }));
 
     merged.payments = merged.payments.map((p) => ({

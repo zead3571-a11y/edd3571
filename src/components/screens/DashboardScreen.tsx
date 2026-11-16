@@ -23,19 +23,20 @@ import {
 } from 'recharts';
 import { useEduflow } from '../../context/EduflowContext';
 import { ScreenId, UserRole } from '../../types/eduflow';
-import { Button, Card, StatusChip } from '../ui/Primitives';
-import { COLLECTIONS_30_DAYS } from '../../data/seedData';
+import { Button, Card, EmptyState, StatusChip } from '../ui/Primitives';
 import {
   buildAttendanceTrendSeries,
   buildMonthlyRevenueDistribution,
   computeAttendanceStats,
+  computeCenterFinancialOverview,
+  formatDateDDMMYYYY,
   formatEGP,
   formatNumber,
 } from '../../utils/eduflowLogic';
 import { can } from '../../permissions/permissions';
 import { Can } from '../../permissions/Can';
 
-// 3) Owner Dashboard (with Role Variants + Recharts Analytics + New-Center Empty Checklist)
+// 3) Owner Dashboard (with Role Variants, 8 Financial Metrics & Recharts Analytics)
 export const DashboardScreen: React.FC = () => {
   const {
     authSession,
@@ -51,7 +52,10 @@ export const DashboardScreen: React.FC = () => {
     rooms,
     invoices,
     payments,
+    expenses,
+    settlements,
     students,
+    centerSettings,
     navigate,
     setSelectedSessionId,
     openAddStudent,
@@ -61,16 +65,19 @@ export const DashboardScreen: React.FC = () => {
 
   const [attendanceChartMode, setAttendanceChartMode] = useState<'rate' | 'counts'>('rate');
 
-  const actorTeacherId = currentActor?.teacherId || 't1';
+  const actorTeacherId = currentActor?.teacherId || '';
   const canViewFinancials = can(currentActor, 'view', 'financialReports');
   const canTakeAttendance = can(currentActor, 'take_attendance', 'sessions');
 
-  // Filter today's sessions (2026-11-12) and filter by teacher if role === TEACHER
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const todayFormatted = formatDateDDMMYYYY(new Date());
+
+  // Filter today's sessions and filter by teacher if role === TEACHER
   const todaySessions = sessions.filter((s) => {
-    if (s.date !== '2026-11-12') return false;
+    if (s.date !== todayIso) return false;
     if (currentRole === UserRole.TEACHER) {
       const grp = groups.find((g) => g.id === s.groupId);
-      return grp?.teacherId === actorTeacherId;
+      return grp?.teacherId === actorTeacherId || s.teacherId === actorTeacherId;
     }
     return true;
   });
@@ -81,12 +88,14 @@ export const DashboardScreen: React.FC = () => {
     const teacherGroupIds = new Set(
       groups.filter((g) => g.teacherId === actorTeacherId).map((g) => g.id)
     );
-    return sessions.filter((s) => teacherGroupIds.has(s.groupId));
+    return sessions.filter(
+      (s) => teacherGroupIds.has(s.groupId) || s.teacherId === actorTeacherId
+    );
   }, [sessions, groups, currentRole, actorTeacherId]);
 
   const attendanceTrendData = useMemo(
-    () => buildAttendanceTrendSeries(roleScopedSessions, currentRole !== UserRole.TEACHER),
-    [roleScopedSessions, currentRole]
+    () => buildAttendanceTrendSeries(roleScopedSessions),
+    [roleScopedSessions]
   );
 
   const revenueDistributionData = useMemo(
@@ -99,6 +108,37 @@ export const DashboardScreen: React.FC = () => {
     [revenueDistributionData]
   );
 
+  const financialOverview = useMemo(
+    () =>
+      computeCenterFinancialOverview({
+        students,
+        teachers,
+        groups,
+        sessions,
+        invoices,
+        payments,
+        expenses,
+        settlements,
+      }),
+    [students, teachers, groups, sessions, invoices, payments, expenses, settlements]
+  );
+
+  // Real daily collections grouped from actual payments (last 30 days / recorded dates)
+  const collectionsSeries = useMemo(() => {
+    if (payments.length === 0) return [];
+    const byDate = new Map<string, number>();
+    payments.forEach((p) => {
+      byDate.set(p.date, (byDate.get(p.date) || 0) + p.amount);
+    });
+    return Array.from(byDate.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .slice(-30)
+      .map(([date, amount]) => ({
+        day: formatDateDDMMYYYY(date),
+        amount,
+      }));
+  }, [payments]);
+
   // KPI calculations
   let presentToday = 0;
   let absentToday = 0;
@@ -109,7 +149,7 @@ export const DashboardScreen: React.FC = () => {
   });
 
   const collectedToday = payments
-    .filter((p) => p.date === '2026-11-12')
+    .filter((p) => p.date === todayIso)
     .reduce((acc, p) => acc + p.amount, 0);
 
   const overdueInvoices = invoices.filter((inv) => inv.status === 'overdue');
@@ -133,15 +173,15 @@ export const DashboardScreen: React.FC = () => {
         <div>
           <h2 className="text-xl font-bold text-[#0F2A4A]">
             {currentRole === UserRole.TEACHER
-              ? `أهلاً بك، ${authSession?.name || 'أ. محمد عبد السلام'}`
+              ? `أهلاً بك، ${authSession?.name || 'المدرس'}`
               : currentRole === UserRole.ACCOUNTANT
-              ? `أهلاً بك، ${authSession?.name || 'محمود عادل'} — القسم المالي`
+              ? `أهلاً بك، ${authSession?.name || 'القسم المالي'} — الحسابات`
               : currentRole === UserRole.RECEPTIONIST
-              ? `أهلاً بك، ${authSession?.name || 'ندى مصطفى'} — الاستقبال`
-              : `مرحباً، ${authSession?.name || 'أ. محمود عبد الرحمن'}`}
+              ? `أهلاً بك، ${authSession?.name || 'الاستقبال'}`
+              : `مرحباً، ${authSession?.name || 'مسيو حامد البيلي'}`}
           </h2>
           <p className="text-xs text-[#5B6B80] mt-0.5 tabular-nums">
-            الخميس، 12 نوفمبر 2026 · متابعة حية لحصص السنتر اليوم
+            {centerSettings.name} · {todayFormatted} · متابعة حية للسنتر اليوم
           </p>
         </div>
 
@@ -183,7 +223,7 @@ export const DashboardScreen: React.FC = () => {
                   : 'bg-white text-[#5B6B80] border-[#E2E8F0] hover:text-[#0F2A4A]'
               }`}
             >
-              {newCenterEmptyMode ? 'عرض بيانات السنتر العامرة' : 'معاينة حالة سنتر جديد (فارغ)'}
+              {newCenterEmptyMode ? 'عرض بيانات السنتر الحالية' : 'معاينة حالة سنتر جديد (فارغ)'}
             </button>
           )}
         </div>
@@ -210,7 +250,7 @@ export const DashboardScreen: React.FC = () => {
                   </span>
                   <div>
                     <p className="text-sm font-bold text-[#1E293B]">أضف مدرساً للسنتر</p>
-                    <p className="text-xs text-[#5B6B80]">سجّل المدرسين ونسبة السنتر أو إيجار القاعة</p>
+                    <p className="text-xs text-[#5B6B80]">سجّل المدرسين ونظام حساب مستحقاتهم</p>
                   </div>
                 </div>
                 <Button size="sm" variant="secondary" onClick={() => navigate(ScreenId.TEACHERS)}>
@@ -255,12 +295,14 @@ export const DashboardScreen: React.FC = () => {
           {/* KPI Cards Row (2x2 on Mobile, 4 cols on Desktop) */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             <Card className="p-4 sm:p-5">
-              <span className="text-xs font-semibold text-[#5B6B80] block">حصص اليوم</span>
-              <span className="text-2xl font-bold text-[#0F2A4A] tabular-nums mt-1.5 block">
-                {todaySessions.length}
+              <span className="text-xs font-semibold text-[#5B6B80] block">
+                الحصص التدريسية المكتملة
               </span>
-              <span className="text-xs text-[#5B6B80] mt-1 block">
-                {pendingAttendanceSessions.length} بانتظار تسجيل الحضور
+              <span className="text-2xl font-bold text-[#0F2A4A] tabular-nums mt-1.5 block">
+                {formatNumber(financialOverview.completedSessionsCount)}
+              </span>
+              <span className="text-xs text-[#5B6B80] mt-1 block tabular-nums">
+                حصص اليوم المجدولة: {todaySessions.length}
               </span>
             </Card>
 
@@ -277,17 +319,19 @@ export const DashboardScreen: React.FC = () => {
               <span className="text-2xl font-bold text-[#991B1B] tabular-nums mt-1.5 block">
                 {absentToday}
               </span>
-              <span className="text-xs text-[#5B6B80] mt-1 block">تنبيهات أولياء الأمور جاهزة</span>
+              <span className="text-xs text-[#5B6B80] mt-1 block">تنبيهات أولياء الأمور</span>
             </Card>
 
             {canViewFinancials ? (
               <Card className="p-4 sm:p-5">
-                <span className="text-xs font-semibold text-[#5B6B80] block">محصّل اليوم</span>
+                <span className="text-xs font-semibold text-[#5B6B80] block">
+                  المحصّل الفعلي من الطلاب
+                </span>
                 <span className="text-2xl font-bold text-[#0F766E] tabular-nums mt-1.5 block">
-                  {formatEGP(collectedToday)}
+                  {formatEGP(financialOverview.collectedRevenue)}
                 </span>
                 <span className="text-xs text-[#5B6B80] mt-1 block tabular-nums">
-                  المتأخرات: {formatEGP(overdueInvoices.reduce((s, i) => s + (i.total - i.paid), 0))}
+                  المتبقي لدى الطلاب: {formatEGP(financialOverview.outstandingReceivables)}
                 </span>
               </Card>
             ) : currentRole === UserRole.TEACHER ? (
@@ -307,11 +351,160 @@ export const DashboardScreen: React.FC = () => {
                   {students.filter((s) => s.status === 'active').length}
                 </span>
                 <span className="text-xs text-[#5B6B80] mt-1 block tabular-nums">
-                  إيصالات صادرة اليوم: {payments.filter((p) => p.date === '2026-11-12').length}
+                  إيصالات صادرة اليوم: {payments.filter((p) => p.date === todayIso).length}
                 </span>
               </Card>
             )}
           </div>
+
+          {/* 8 Financial Dashboard Metrics + Per-Teacher Dues Breakdown (Financial Roles Only) */}
+          <Can action="view" resource="financialReports">
+            <Card className="p-5 space-y-5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h3 className="text-base font-bold text-[#0F2A4A]">
+                    المؤشرات المالية الأساسية — {centerSettings.name}
+                  </h3>
+                  <p className="text-xs text-[#5B6B80] mt-0.5">
+                    متابعة لحظية للإيراد المتوقع، التحصيل الفعلي، تعويضات المدرسين بالحصة، والمصروفات التشغيلية
+                  </p>
+                </div>
+                <span className="text-xs text-[#5B6B80] tabular-nums">
+                  تحصيل اليوم: <strong className="text-[#0F766E]">{formatEGP(collectedToday)}</strong>
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div className="p-3.5 rounded-[10px] bg-[#F4F7FA] border border-[#E2E8F0]">
+                  <span className="text-[11px] font-semibold text-[#5B6B80] block">
+                    1. الإيراد الشهري المتوقع
+                  </span>
+                  <strong className="text-lg font-bold text-[#0F2A4A] tabular-nums mt-1 block">
+                    {formatEGP(financialOverview.expectedStudentRevenue)}
+                  </strong>
+                  <span className="text-[11px] text-[#5B6B80] block mt-0.5 tabular-nums">
+                    {students.filter((s) => s.status === 'active').length} طلاب نشطون
+                  </span>
+                </div>
+
+                <div className="p-3.5 rounded-[10px] bg-[#F4F7FA] border border-[#E2E8F0]">
+                  <span className="text-[11px] font-semibold text-[#5B6B80] block">
+                    2. المحصّل الفعلي
+                  </span>
+                  <strong className="text-lg font-bold text-[#0F766E] tabular-nums mt-1 block">
+                    {formatEGP(financialOverview.collectedRevenue)}
+                  </strong>
+                  <span className="text-[11px] text-[#5B6B80] block mt-0.5">من رسوم الطلاب</span>
+                </div>
+
+                <div className="p-3.5 rounded-[10px] bg-[#F4F7FA] border border-[#E2E8F0]">
+                  <span className="text-[11px] font-semibold text-[#5B6B80] block">
+                    3. المتبقي لدى الطلاب
+                  </span>
+                  <strong className="text-lg font-bold text-[#92400E] tabular-nums mt-1 block">
+                    {formatEGP(financialOverview.outstandingReceivables)}
+                  </strong>
+                  <span className="text-[11px] text-[#5B6B80] block mt-0.5">مستحقات قائمة</span>
+                </div>
+
+                <div className="p-3.5 rounded-[10px] bg-[#F4F7FA] border border-[#E2E8F0]">
+                  <span className="text-[11px] font-semibold text-[#5B6B80] block">
+                    4. الحصص المكتملة
+                  </span>
+                  <strong className="text-lg font-bold text-[#0F2A4A] tabular-nums mt-1 block">
+                    {formatNumber(financialOverview.completedSessionsCount)}
+                  </strong>
+                  <span className="text-[11px] text-[#5B6B80] block mt-0.5">حصة مسجلة مكتملة</span>
+                </div>
+
+                <div className="p-3.5 rounded-[10px] bg-[#F4F7FA] border border-[#E2E8F0]">
+                  <span className="text-[11px] font-semibold text-[#5B6B80] block">
+                    6. إجمالي تعويضات المدرسين
+                  </span>
+                  <strong className="text-lg font-bold text-[#0F2A4A] tabular-nums mt-1 block">
+                    {formatEGP(financialOverview.totalTeacherCompensation)}
+                  </strong>
+                  <span className="text-[11px] text-[#5B6B80] block mt-0.5 tabular-nums">
+                    المنصرف فعلياً: {formatEGP(financialOverview.totalTeacherPaidOut)}
+                  </span>
+                </div>
+
+                <div className="p-3.5 rounded-[10px] bg-[#F4F7FA] border border-[#E2E8F0]">
+                  <span className="text-[11px] font-semibold text-[#5B6B80] block">
+                    7. المصروفات التشغيلية
+                  </span>
+                  <strong className="text-lg font-bold text-[#991B1B] tabular-nums mt-1 block">
+                    {formatEGP(financialOverview.totalExpenses)}
+                  </strong>
+                  <span className="text-[11px] text-[#5B6B80] block mt-0.5">المصروفات المسجلة</span>
+                </div>
+
+                <div className="p-3.5 rounded-[10px] bg-[#F4F7FA] border border-[#E2E8F0]">
+                  <span className="text-[11px] font-semibold text-[#5B6B80] block">
+                    8أ. صافي التشغيل الفعلي (المحصّل)
+                  </span>
+                  <strong className="text-lg font-bold text-[#0F766E] tabular-nums mt-1 block">
+                    {formatEGP(financialOverview.netCollectedOperatingResult)}
+                  </strong>
+                  <span className="text-[11px] text-[#5B6B80] block mt-0.5">
+                    المحصّل − المنصرف − المصروفات
+                  </span>
+                </div>
+
+                <div className="p-3.5 rounded-[10px] bg-[#F4F7FA] border border-[#E2E8F0]">
+                  <span className="text-[11px] font-semibold text-[#5B6B80] block">
+                    8ب. صافي التشغيل التقديري (المتوقع)
+                  </span>
+                  <strong className="text-lg font-bold text-[#0F2A4A] tabular-nums mt-1 block">
+                    {formatEGP(financialOverview.estimatedOperatingResult)}
+                  </strong>
+                  <span className="text-[11px] text-[#5B6B80] block mt-0.5">
+                    المتوقع − التعويضات − المصروفات
+                  </span>
+                </div>
+              </div>
+
+              {/* 5. Per-Teacher Dues Breakdown */}
+              <div className="pt-3 border-t border-[#E2E8F0] space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-bold text-[#0F2A4A]">
+                    5. مستحقات كل مدرس على حدة
+                  </h4>
+                  <button
+                    type="button"
+                    onClick={() => navigate(ScreenId.TEACHERS)}
+                    className="text-xs font-bold text-[#0F766E] hover:underline cursor-pointer"
+                  >
+                    إدارة المدرسين والتسويات
+                  </button>
+                </div>
+                {financialOverview.teacherBreakdowns.length === 0 ? (
+                  <p className="text-xs text-[#5B6B80]">لا يوجد مدرسون مسجلون حتى الآن.</p>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    {financialOverview.teacherBreakdowns.map((tb) => (
+                      <div
+                        key={tb.teacherId}
+                        className="p-3 rounded-[10px] border border-[#E2E8F0] bg-white flex items-center justify-between gap-2"
+                      >
+                        <div>
+                          <p className="text-sm font-bold text-[#0F2A4A]">{tb.teacherName}</p>
+                          <p className="text-[11px] text-[#5B6B80] tabular-nums">
+                            {tb.compensationType === 'per_session'
+                              ? `${formatEGP(tb.ratePerSession)} / حصة × ${tb.completedSessionsCount} حصة مكتملة`
+                              : `${tb.completedSessionsCount} حصة مكتملة`}
+                          </p>
+                        </div>
+                        <span className="text-base font-bold text-[#0F766E] tabular-nums shrink-0">
+                          {formatEGP(tb.accruedCompensation)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </Card>
+          </Can>
 
           {/* Quick Actions + Alerts Row */}
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
@@ -477,66 +670,82 @@ export const DashboardScreen: React.FC = () => {
               </Button>
             </div>
 
-            <div className="overflow-x-auto">
-              <table className="w-full text-right border-collapse">
-                <thead>
-                  <tr className="bg-slate-50 border-b border-[#E2E8F0] text-xs font-bold text-[#5B6B80]">
-                    <th className="py-3 px-4">المجموعة</th>
-                    <th className="py-3 px-4">المدرس</th>
-                    <th className="py-3 px-4">الموعد</th>
-                    <th className="py-3 px-4">القاعة</th>
-                    <th className="py-3 px-4">الحالة</th>
-                    <th className="py-3 px-4 text-left">الإجراء</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[#E2E8F0] text-sm">
-                  {todaySessions.map((sess) => {
-                    const grp = groups.find((g) => g.id === sess.groupId);
-                    const tch = teachers.find((t) => t.id === grp?.teacherId);
-                    const rm = rooms.find((r) => r.id === sess.roomId);
-                    return (
-                      <tr key={sess.id} className="hover:bg-slate-50/80 transition-colors">
-                        <td className="py-3.5 px-4 font-bold text-[#1E293B]">
-                          {grp?.name}
-                        </td>
-                        <td className="py-3.5 px-4 text-[#5B6B80]">{tch?.name}</td>
-                        <td className="py-3.5 px-4 tabular-nums text-[#1E293B]">
-                          {sess.timeLabel}
-                        </td>
-                        <td className="py-3.5 px-4 text-[#5B6B80]">{rm?.name}</td>
-                        <td className="py-3.5 px-4">
-                          {sess.status === 'recorded' && (
-                            <StatusChip tone="success" label="تم التسجيل" />
-                          )}
-                          {sess.status === 'pending' && (
-                            <StatusChip tone="warning" label="بانتظار الحضور" />
-                          )}
-                          {sess.status === 'upcoming' && (
-                            <StatusChip tone="neutral" label="لم تبدأ" />
-                          )}
-                        </td>
-                        <td className="py-3.5 px-4 text-left">
-                          {canTakeAttendance ? (
-                            <Button
-                              size="sm"
-                              variant={sess.status === 'pending' ? 'primary' : 'secondary'}
-                              onClick={() => {
-                                setSelectedSessionId(sess.id);
-                                navigate(ScreenId.TAKE_ATTENDANCE);
-                              }}
-                            >
-                              {sess.status === 'recorded' ? 'عرض / تعديل' : 'تسجيل الحضور'}
-                            </Button>
-                          ) : (
-                            <span className="text-xs text-[#5B6B80]">عرض فقط</span>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+            {todaySessions.length === 0 ? (
+              <div className="p-6">
+                <EmptyState
+                  title="لا توجد حصص مجدولة اليوم"
+                  description="لم يتم إنشاء مجموعات أو حصص بتاريخ اليوم بعد. يمكنك البدء بإنشاء مجموعة من الجدول."
+                  actionLabel={can(currentActor, 'create', 'groups') ? 'إضافة مجموعة جديدة' : undefined}
+                  onAction={can(currentActor, 'create', 'groups') ? () => openCreateGroup() : undefined}
+                />
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-right border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50 border-b border-[#E2E8F0] text-xs font-bold text-[#5B6B80]">
+                      <th className="py-3 px-4">المجموعة</th>
+                      <th className="py-3 px-4">المدرس</th>
+                      <th className="py-3 px-4">الموعد</th>
+                      <th className="py-3 px-4">القاعة</th>
+                      <th className="py-3 px-4">الحالة</th>
+                      <th className="py-3 px-4 text-left">الإجراء</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#E2E8F0] text-sm">
+                    {todaySessions.map((sess) => {
+                      const grp = groups.find((g) => g.id === sess.groupId);
+                      const tch = teachers.find(
+                        (t) => t.id === (grp?.teacherId || sess.teacherId)
+                      );
+                      const rm = rooms.find((r) => r.id === sess.roomId);
+                      return (
+                        <tr key={sess.id} className="hover:bg-slate-50/80 transition-colors">
+                          <td className="py-3.5 px-4 font-bold text-[#1E293B]">
+                            {grp?.name || 'حصة عامة'}
+                          </td>
+                          <td className="py-3.5 px-4 text-[#5B6B80]">{tch?.name || '—'}</td>
+                          <td className="py-3.5 px-4 tabular-nums text-[#1E293B]">
+                            {sess.timeLabel}
+                          </td>
+                          <td className="py-3.5 px-4 text-[#5B6B80]">{rm?.name || '—'}</td>
+                          <td className="py-3.5 px-4">
+                            {sess.status === 'recorded' && (
+                              <StatusChip tone="success" label="تم التسجيل" />
+                            )}
+                            {sess.status === 'pending' && (
+                              <StatusChip tone="warning" label="بانتظار الحضور" />
+                            )}
+                            {sess.status === 'upcoming' && (
+                              <StatusChip tone="neutral" label="لم تبدأ" />
+                            )}
+                            {sess.status === 'cancelled' && (
+                              <StatusChip tone="danger" label="ملغاة" />
+                            )}
+                          </td>
+                          <td className="py-3.5 px-4 text-left">
+                            {canTakeAttendance ? (
+                              <Button
+                                size="sm"
+                                variant={sess.status === 'pending' ? 'primary' : 'secondary'}
+                                onClick={() => {
+                                  setSelectedSessionId(sess.id);
+                                  navigate(ScreenId.TAKE_ATTENDANCE);
+                                }}
+                              >
+                                {sess.status === 'recorded' ? 'عرض / تعديل' : 'تسجيل الحضور'}
+                              </Button>
+                            ) : (
+                              <span className="text-xs text-[#5B6B80]">عرض فقط</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </Card>
 
           {/* Recharts Analytics Row: Student Attendance Trends + Monthly Revenue Distribution */}
@@ -556,167 +765,177 @@ export const DashboardScreen: React.FC = () => {
                     متوسط نسبة الالتزام:{' '}
                     <strong className="text-[#0F766E]">{avgAttendanceRate}%</strong>
                     {' · '}
-                    <span>{attendanceTrendData.length} أيام دراسية</span>
+                    <span>{attendanceTrendData.length} أيام مسجلة</span>
                   </p>
                 </div>
 
-                <div
-                  className="inline-flex items-center gap-1 p-1 bg-[#F4F7FA] border border-[#E2E8F0] rounded-[8px] text-xs"
-                  role="group"
-                  aria-label="نمط عرض مخطط الحضور"
-                >
-                  <button
-                    type="button"
-                    onClick={() => setAttendanceChartMode('rate')}
-                    className={`px-2.5 py-1 rounded-[6px] font-bold cursor-pointer transition-colors ${
-                      attendanceChartMode === 'rate'
-                        ? 'bg-white text-[#0F2A4A] shadow-xs'
-                        : 'text-[#5B6B80] hover:text-[#1E293B]'
-                    }`}
+                {attendanceTrendData.length > 0 && (
+                  <div
+                    className="inline-flex items-center gap-1 p-1 bg-[#F4F7FA] border border-[#E2E8F0] rounded-[8px] text-xs"
+                    role="group"
+                    aria-label="نمط عرض مخطط الحضور"
                   >
-                    نسبة الحضور %
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setAttendanceChartMode('counts')}
-                    className={`px-2.5 py-1 rounded-[6px] font-bold cursor-pointer transition-colors ${
-                      attendanceChartMode === 'counts'
-                        ? 'bg-white text-[#0F2A4A] shadow-xs'
-                        : 'text-[#5B6B80] hover:text-[#1E293B]'
-                    }`}
-                  >
-                    حاضر / غائب
-                  </button>
-                </div>
+                    <button
+                      type="button"
+                      onClick={() => setAttendanceChartMode('rate')}
+                      className={`px-2.5 py-1 rounded-[6px] font-bold cursor-pointer transition-colors ${
+                        attendanceChartMode === 'rate'
+                          ? 'bg-white text-[#0F2A4A] shadow-xs'
+                          : 'text-[#5B6B80] hover:text-[#1E293B]'
+                      }`}
+                    >
+                      نسبة الحضور %
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAttendanceChartMode('counts')}
+                      className={`px-2.5 py-1 rounded-[6px] font-bold cursor-pointer transition-colors ${
+                        attendanceChartMode === 'counts'
+                          ? 'bg-white text-[#0F2A4A] shadow-xs'
+                          : 'text-[#5B6B80] hover:text-[#1E293B]'
+                      }`}
+                    >
+                      حاضر / غائب
+                    </button>
+                  </div>
+                )}
               </div>
 
-              {attendanceChartMode === 'counts' && (
-                <div className="flex flex-wrap items-center gap-4 mb-2 text-xs text-[#5B6B80]">
-                  <span className="inline-flex items-center gap-1.5 font-semibold text-[#1E293B]">
-                    <span className="w-2.5 h-2.5 rounded-xs bg-[#0F766E] inline-block" />
-                    حاضر
-                  </span>
-                  <span className="inline-flex items-center gap-1.5 font-semibold text-[#1E293B]">
-                    <span className="w-2.5 h-2.5 rounded-xs bg-[#D97706] inline-block" />
-                    متأخر
-                  </span>
-                  <span className="inline-flex items-center gap-1.5 font-semibold text-[#1E293B]">
-                    <span className="w-2.5 h-2.5 rounded-xs bg-[#DC2626] inline-block" />
-                    غائب
-                  </span>
+              {attendanceTrendData.length === 0 ? (
+                <div className="py-10 text-center text-xs text-[#5B6B80]">
+                  لا توجد جلسات حضور مسجلة حتى الآن لعرض منحنى الالتزام.
                 </div>
-              )}
-
-              <div className="w-full h-64" dir="ltr">
-                <ResponsiveContainer width="100%" height="100%">
-                  {attendanceChartMode === 'rate' ? (
-                    <AreaChart
-                      data={attendanceTrendData}
-                      margin={{ top: 10, right: 8, left: 10, bottom: 4 }}
-                    >
-                      <defs>
-                        <linearGradient id="attendanceRateGrad" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#0F766E" stopOpacity={0.28} />
-                          <stop offset="95%" stopColor="#0F766E" stopOpacity={0.02} />
-                        </linearGradient>
-                      </defs>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" vertical={false} />
-                      <XAxis
-                        dataKey="label"
-                        reversed
-                        tick={{ fill: '#5B6B80', fontSize: 11, fontFamily: 'Cairo, sans-serif' }}
-                        axisLine={{ stroke: '#E2E8F0' }}
-                        tickLine={false}
-                      />
-                      <YAxis
-                        orientation="right"
-                        domain={[0, 100]}
-                        width={44}
-                        tickFormatter={(val) => `${val}%`}
-                        tick={{ fill: '#5B6B80', fontSize: 11, fontFamily: 'Cairo, sans-serif' }}
-                        axisLine={false}
-                        tickLine={false}
-                      />
-                      <Tooltip
-                        content={({ active, payload }) => {
-                          if (!active || !payload || !payload.length) return null;
-                          const pt = payload[0].payload;
-                          return (
-                            <div
-                              dir="rtl"
-                              className="bg-white border border-[#E2E8F0] rounded-[10px] shadow-md px-3.5 py-2.5 text-xs space-y-1 text-right"
-                            >
-                              <p className="font-bold text-[#0F2A4A]">{pt.label}</p>
-                              <p className="font-bold text-[#0F766E] tabular-nums">
-                                نسبة الالتزام: {pt.attendanceRate}%
-                              </p>
-                              <p className="text-[#5B6B80] tabular-nums">
-                                حاضر: {pt.present} · متأخر: {pt.late} · غائب: {pt.absent}
-                              </p>
-                            </div>
-                          );
-                        }}
-                      />
-                      <Area
-                        type="monotone"
-                        dataKey="attendanceRate"
-                        name="نسبة الحضور"
-                        stroke="#0F766E"
-                        strokeWidth={2.5}
-                        fill="url(#attendanceRateGrad)"
-                        activeDot={{ r: 5, fill: '#0F2A4A', stroke: '#FFFFFF', strokeWidth: 2 }}
-                      />
-                    </AreaChart>
-                  ) : (
-                    <BarChart
-                      data={attendanceTrendData}
-                      margin={{ top: 10, right: 8, left: 10, bottom: 4 }}
-                    >
-                      <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" vertical={false} />
-                      <XAxis
-                        dataKey="label"
-                        reversed
-                        tick={{ fill: '#5B6B80', fontSize: 11, fontFamily: 'Cairo, sans-serif' }}
-                        axisLine={{ stroke: '#E2E8F0' }}
-                        tickLine={false}
-                      />
-                      <YAxis
-                        orientation="right"
-                        width={36}
-                        tick={{ fill: '#5B6B80', fontSize: 11, fontFamily: 'Cairo, sans-serif' }}
-                        axisLine={false}
-                        tickLine={false}
-                      />
-                      <Tooltip
-                        content={({ active, payload }) => {
-                          if (!active || !payload || !payload.length) return null;
-                          const pt = payload[0].payload;
-                          return (
-                            <div
-                              dir="rtl"
-                              className="bg-white border border-[#E2E8F0] rounded-[10px] shadow-md px-3.5 py-2.5 text-xs space-y-1 text-right"
-                            >
-                              <p className="font-bold text-[#0F2A4A]">{pt.label}</p>
-                              <p className="text-[#065F46] font-semibold tabular-nums">
-                                حاضر: {pt.present}
-                              </p>
-                              <p className="text-[#92400E] font-semibold tabular-nums">
-                                متأخر: {pt.late}
-                              </p>
-                              <p className="text-[#991B1B] font-semibold tabular-nums">
-                                غائب: {pt.absent}
-                              </p>
-                            </div>
-                          );
-                        }}
-                      />
-                      <Bar dataKey="present" stackId="att" fill="#0F766E" radius={[0, 0, 0, 0]} />
-                      <Bar dataKey="late" stackId="att" fill="#D97706" radius={[0, 0, 0, 0]} />
-                      <Bar dataKey="absent" stackId="att" fill="#DC2626" radius={[4, 4, 0, 0]} />
-                    </BarChart>
+              ) : (
+                <>
+                  {attendanceChartMode === 'counts' && (
+                    <div className="flex flex-wrap items-center gap-4 mb-2 text-xs text-[#5B6B80]">
+                      <span className="inline-flex items-center gap-1.5 font-semibold text-[#1E293B]">
+                        <span className="w-2.5 h-2.5 rounded-xs bg-[#0F766E] inline-block" />
+                        حاضر
+                      </span>
+                      <span className="inline-flex items-center gap-1.5 font-semibold text-[#1E293B]">
+                        <span className="w-2.5 h-2.5 rounded-xs bg-[#D97706] inline-block" />
+                        متأخر
+                      </span>
+                      <span className="inline-flex items-center gap-1.5 font-semibold text-[#1E293B]">
+                        <span className="w-2.5 h-2.5 rounded-xs bg-[#DC2626] inline-block" />
+                        غائب
+                      </span>
+                    </div>
                   )}
-                </ResponsiveContainer>
-              </div>
+
+                  <div className="w-full h-64" dir="ltr">
+                    <ResponsiveContainer width="100%" height="100%">
+                      {attendanceChartMode === 'rate' ? (
+                        <AreaChart
+                          data={attendanceTrendData}
+                          margin={{ top: 10, right: 8, left: 10, bottom: 4 }}
+                        >
+                          <defs>
+                            <linearGradient id="attendanceRateGrad" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="5%" stopColor="#0F766E" stopOpacity={0.28} />
+                              <stop offset="95%" stopColor="#0F766E" stopOpacity={0.02} />
+                            </linearGradient>
+                          </defs>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" vertical={false} />
+                          <XAxis
+                            dataKey="label"
+                            reversed
+                            tick={{ fill: '#5B6B80', fontSize: 11, fontFamily: 'Cairo, sans-serif' }}
+                            axisLine={{ stroke: '#E2E8F0' }}
+                            tickLine={false}
+                          />
+                          <YAxis
+                            orientation="right"
+                            domain={[0, 100]}
+                            width={44}
+                            tickFormatter={(val) => `${val}%`}
+                            tick={{ fill: '#5B6B80', fontSize: 11, fontFamily: 'Cairo, sans-serif' }}
+                            axisLine={false}
+                            tickLine={false}
+                          />
+                          <Tooltip
+                            content={({ active, payload }) => {
+                              if (!active || !payload || !payload.length) return null;
+                              const pt = payload[0].payload;
+                              return (
+                                <div
+                                  dir="rtl"
+                                  className="bg-white border border-[#E2E8F0] rounded-[10px] shadow-md px-3.5 py-2.5 text-xs space-y-1 text-right"
+                                >
+                                  <p className="font-bold text-[#0F2A4A]">{pt.label}</p>
+                                  <p className="font-bold text-[#0F766E] tabular-nums">
+                                    نسبة الالتزام: {pt.attendanceRate}%
+                                  </p>
+                                  <p className="text-[#5B6B80] tabular-nums">
+                                    حاضر: {pt.present} · متأخر: {pt.late} · غائب: {pt.absent}
+                                  </p>
+                                </div>
+                              );
+                            }}
+                          />
+                          <Area
+                            type="monotone"
+                            dataKey="attendanceRate"
+                            name="نسبة الحضور"
+                            stroke="#0F766E"
+                            strokeWidth={2.5}
+                            fill="url(#attendanceRateGrad)"
+                            activeDot={{ r: 5, fill: '#0F2A4A', stroke: '#FFFFFF', strokeWidth: 2 }}
+                          />
+                        </AreaChart>
+                      ) : (
+                        <BarChart
+                          data={attendanceTrendData}
+                          margin={{ top: 10, right: 8, left: 10, bottom: 4 }}
+                        >
+                          <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" vertical={false} />
+                          <XAxis
+                            dataKey="label"
+                            reversed
+                            tick={{ fill: '#5B6B80', fontSize: 11, fontFamily: 'Cairo, sans-serif' }}
+                            axisLine={{ stroke: '#E2E8F0' }}
+                            tickLine={false}
+                          />
+                          <YAxis
+                            orientation="right"
+                            width={36}
+                            tick={{ fill: '#5B6B80', fontSize: 11, fontFamily: 'Cairo, sans-serif' }}
+                            axisLine={false}
+                            tickLine={false}
+                          />
+                          <Tooltip
+                            content={({ active, payload }) => {
+                              if (!active || !payload || !payload.length) return null;
+                              const pt = payload[0].payload;
+                              return (
+                                <div
+                                  dir="rtl"
+                                  className="bg-white border border-[#E2E8F0] rounded-[10px] shadow-md px-3.5 py-2.5 text-xs space-y-1 text-right"
+                                >
+                                  <p className="font-bold text-[#0F2A4A]">{pt.label}</p>
+                                  <p className="text-[#065F46] font-semibold tabular-nums">
+                                    حاضر: {pt.present}
+                                  </p>
+                                  <p className="text-[#92400E] font-semibold tabular-nums">
+                                    متأخر: {pt.late}
+                                  </p>
+                                  <p className="text-[#991B1B] font-semibold tabular-nums">
+                                    غائب: {pt.absent}
+                                  </p>
+                                </div>
+                              );
+                            }}
+                          />
+                          <Bar dataKey="present" stackId="att" fill="#0F766E" radius={[0, 0, 0, 0]} />
+                          <Bar dataKey="late" stackId="att" fill="#D97706" radius={[0, 0, 0, 0]} />
+                          <Bar dataKey="absent" stackId="att" fill="#DC2626" radius={[4, 4, 0, 0]} />
+                        </BarChart>
+                      )}
+                    </ResponsiveContainer>
+                  </div>
+                </>
+              )}
             </Card>
 
             {/* Monthly Revenue Distribution Donut Chart (Financial Roles Only) */}
@@ -728,7 +947,7 @@ export const DashboardScreen: React.FC = () => {
                       توزيع الإيرادات الشهرية
                     </h3>
                     <p className="text-xs text-[#5B6B80] mt-0.5 tabular-nums">
-                      حسب المادة الدراسية · الإجمالي:{' '}
+                      الإجمالي المسجل:{' '}
                       <strong className="text-[#0F2A4A]">
                         {formatEGP(totalDistributedRevenue)}
                       </strong>
@@ -736,149 +955,158 @@ export const DashboardScreen: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2 items-center gap-4 my-auto">
-                  <div className="w-full h-48" dir="ltr">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <PieChart>
-                        <Pie
-                          data={revenueDistributionData}
-                          dataKey="amount"
-                          nameKey="subject"
-                          cx="50%"
-                          cy="50%"
-                          innerRadius={48}
-                          outerRadius={76}
-                          paddingAngle={2}
-                        >
-                          {revenueDistributionData.map((entry) => (
-                            <Cell key={entry.subject} fill={entry.color} stroke="#FFFFFF" strokeWidth={2} />
-                          ))}
-                        </Pie>
-                        <Tooltip
-                          content={({ active, payload }) => {
-                            if (!active || !payload || !payload.length) return null;
-                            const item = payload[0].payload;
-                            return (
-                              <div
-                                dir="rtl"
-                                className="bg-white border border-[#E2E8F0] rounded-[10px] shadow-md px-3 py-2 text-xs text-right"
-                              >
-                                <p className="font-bold text-[#0F2A4A]">{item.subject}</p>
-                                <p className="text-[#0F766E] font-bold tabular-nums mt-0.5">
-                                  {formatEGP(item.amount)} ({item.percentage}%)
-                                </p>
-                              </div>
-                            );
-                          }}
-                        />
-                      </PieChart>
-                    </ResponsiveContainer>
+                {revenueDistributionData.length === 0 ? (
+                  <div className="py-10 text-center text-xs text-[#5B6B80]">
+                    لا توجد فواتير أو مدفوعات مسجلة لتوزيع الإيرادات بعد.
                   </div>
-
-                  <div className="space-y-2 text-xs">
-                    {revenueDistributionData.map((slice) => (
-                      <div
-                        key={slice.subject}
-                        className="flex items-center justify-between gap-2 py-1 border-b border-slate-100 last:border-b-0"
-                      >
-                        <div className="flex items-center gap-2 min-w-0">
-                          <span
-                            className="w-2.5 h-2.5 rounded-xs shrink-0"
-                            style={{ backgroundColor: slice.color }}
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2 items-center gap-4 my-auto">
+                    <div className="w-full h-48" dir="ltr">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                          <Pie
+                            data={revenueDistributionData}
+                            dataKey="amount"
+                            nameKey="subject"
+                            cx="50%"
+                            cy="50%"
+                            innerRadius={48}
+                            outerRadius={76}
+                            paddingAngle={2}
+                          >
+                            {revenueDistributionData.map((entry) => (
+                              <Cell key={entry.subject} fill={entry.color} stroke="#FFFFFF" strokeWidth={2} />
+                            ))}
+                          </Pie>
+                          <Tooltip
+                            content={({ active, payload }) => {
+                              if (!active || !payload || !payload.length) return null;
+                              const item = payload[0].payload;
+                              return (
+                                <div
+                                  dir="rtl"
+                                  className="bg-white border border-[#E2E8F0] rounded-[10px] shadow-md px-3 py-2 text-xs text-right"
+                                >
+                                  <p className="font-bold text-[#0F2A4A]">{item.subject}</p>
+                                  <p className="text-[#0F766E] font-bold tabular-nums mt-0.5">
+                                    {formatEGP(item.amount)} ({item.percentage}%)
+                                  </p>
+                                </div>
+                              );
+                            }}
                           />
-                          <span className="font-bold text-[#1E293B] truncate">
-                            {slice.subject}
+                        </PieChart>
+                      </ResponsiveContainer>
+                    </div>
+
+                    <div className="space-y-2 text-xs">
+                      {revenueDistributionData.map((slice) => (
+                        <div
+                          key={slice.subject}
+                          className="flex items-center justify-between gap-2 py-1 border-b border-slate-100 last:border-b-0"
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span
+                              className="w-2.5 h-2.5 rounded-xs shrink-0"
+                              style={{ backgroundColor: slice.color }}
+                            />
+                            <span className="font-bold text-[#1E293B] truncate">
+                              {slice.subject}
+                            </span>
+                          </div>
+                          <span className="tabular-nums font-bold text-[#0F2A4A] shrink-0">
+                            {slice.percentage}% · {formatEGP(slice.amount)}
                           </span>
                         </div>
-                        <span className="tabular-nums font-bold text-[#0F2A4A] shrink-0">
-                          {slice.percentage}% · {formatEGP(slice.amount)}
-                        </span>
-                      </div>
-                    ))}
+                      ))}
+                    </div>
                   </div>
-                </div>
+                )}
               </Card>
             </Can>
           </div>
 
-          {/* 30-Day Collections Recharts Area Chart (Financial Roles Only) */}
+          {/* Real Collections Chart (Financial Roles Only) */}
           <Can action="view" resource="financialReports">
             <Card className="p-5">
               <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
                 <div>
                   <h3 className="text-base font-bold text-[#0F2A4A]">
-                    منحنى التحصيل اليومي — آخر 30 يوماً
+                    منحنى التحصيل اليومي الفعلي
                   </h3>
                   <p className="text-xs text-[#5B6B80]">
-                    إجمالي المتحصلات خلال 30 يوماً:{' '}
+                    إجمالي المتحصلات المسجلة:{' '}
                     <strong className="text-[#0F2A4A] tabular-nums">
-                      {formatEGP(
-                        COLLECTIONS_30_DAYS.reduce((sum, item) => sum + item.amount, 0)
-                      )}
+                      {formatEGP(financialOverview.collectedRevenue)}
                     </strong>
                   </p>
                 </div>
                 <span className="text-xs text-[#5B6B80]">
-                  مرر المؤشر على النقاط لعرض قيمة تحصيل كل يوم
+                  يُحدّث تلقائياً فور تسجيل أي دفعة طالب
                 </span>
               </div>
 
-              <div className="w-full h-56" dir="ltr">
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart
-                    data={COLLECTIONS_30_DAYS}
-                    margin={{ top: 10, right: 8, left: 10, bottom: 4 }}
-                  >
-                    <defs>
-                      <linearGradient id="collectionsTealGrad" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#0F766E" stopOpacity={0.25} />
-                        <stop offset="95%" stopColor="#0F766E" stopOpacity={0.01} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" vertical={false} />
-                    <XAxis
-                      dataKey="day"
-                      reversed
-                      interval={1}
-                      tick={{ fill: '#5B6B80', fontSize: 11, fontFamily: 'Cairo, sans-serif' }}
-                      axisLine={{ stroke: '#E2E8F0' }}
-                      tickLine={false}
-                    />
-                    <YAxis
-                      orientation="right"
-                      width={52}
-                      tickFormatter={(val) => `${formatNumber(val)}`}
-                      tick={{ fill: '#5B6B80', fontSize: 11, fontFamily: 'Cairo, sans-serif' }}
-                      axisLine={false}
-                      tickLine={false}
-                    />
-                    <Tooltip
-                      content={({ active, payload }) => {
-                        if (!active || !payload || !payload.length) return null;
-                        const pt = payload[0].payload;
-                        return (
-                          <div
-                            dir="rtl"
-                            className="bg-[#0F2A4A] text-white rounded-[8px] shadow-md px-3 py-2 text-xs text-right tabular-nums"
-                          >
-                            <span className="block opacity-85">{pt.day}</span>
-                            <strong className="text-sm">{formatEGP(pt.amount)}</strong>
-                          </div>
-                        );
-                      }}
-                    />
-                    <Area
-                      type="monotone"
-                      dataKey="amount"
-                      name="التحصيل اليومي"
-                      stroke="#0F766E"
-                      strokeWidth={2.5}
-                      fill="url(#collectionsTealGrad)"
-                      activeDot={{ r: 5.5, fill: '#0F2A4A', stroke: '#FFFFFF', strokeWidth: 2 }}
-                    />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </div>
+              {collectionsSeries.length === 0 ? (
+                <div className="py-10 text-center text-xs text-[#5B6B80]">
+                  لم تُسجّل مدفوعات بعد — إجمالي التحصيل الفعلي {formatEGP(0)}. عند تسجيل أول دفعة سيظهر منحنى التحصيل هنا تلقائياً.
+                </div>
+              ) : (
+                <div className="w-full h-56" dir="ltr">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart
+                      data={collectionsSeries}
+                      margin={{ top: 10, right: 8, left: 10, bottom: 4 }}
+                    >
+                      <defs>
+                        <linearGradient id="collectionsTealGrad" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#0F766E" stopOpacity={0.25} />
+                          <stop offset="95%" stopColor="#0F766E" stopOpacity={0.01} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" vertical={false} />
+                      <XAxis
+                        dataKey="day"
+                        reversed
+                        tick={{ fill: '#5B6B80', fontSize: 11, fontFamily: 'Cairo, sans-serif' }}
+                        axisLine={{ stroke: '#E2E8F0' }}
+                        tickLine={false}
+                      />
+                      <YAxis
+                        orientation="right"
+                        width={52}
+                        tickFormatter={(val) => `${formatNumber(val)}`}
+                        tick={{ fill: '#5B6B80', fontSize: 11, fontFamily: 'Cairo, sans-serif' }}
+                        axisLine={false}
+                        tickLine={false}
+                      />
+                      <Tooltip
+                        content={({ active, payload }) => {
+                          if (!active || !payload || !payload.length) return null;
+                          const pt = payload[0].payload;
+                          return (
+                            <div
+                              dir="rtl"
+                              className="bg-[#0F2A4A] text-white rounded-[8px] shadow-md px-3 py-2 text-xs text-right tabular-nums"
+                            >
+                              <span className="block opacity-85">{pt.day}</span>
+                              <strong className="text-sm">{formatEGP(pt.amount)}</strong>
+                            </div>
+                          );
+                        }}
+                      />
+                      <Area
+                        type="monotone"
+                        dataKey="amount"
+                        name="التحصيل اليومي"
+                        stroke="#0F766E"
+                        strokeWidth={2.5}
+                        fill="url(#collectionsTealGrad)"
+                        activeDot={{ r: 5.5, fill: '#0F2A4A', stroke: '#FFFFFF', strokeWidth: 2 }}
+                      />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
             </Card>
           </Can>
         </>
@@ -886,3 +1114,4 @@ export const DashboardScreen: React.FC = () => {
     </div>
   );
 };
+

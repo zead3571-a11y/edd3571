@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { LocalStorageAdapter, StorageLike } from '../data/localStorageAdapter';
 import { createRepositories } from '../data/repositories';
+import { DEFAULT_CENTER_ID } from '../data/seedData';
 import {
   can,
   canAccessScreen,
@@ -26,41 +27,48 @@ class MockStorage implements StorageLike {
 }
 
 const ownerActor: PermissionActor = {
-  userId: 'u1',
+  userId: 'u-hamed',
   role: UserRole.OWNER,
-  centerId: 'center-1',
+  centerId: DEFAULT_CENTER_ID,
 };
 
 const adminActor: PermissionActor = {
-  userId: 'u2',
+  userId: 'u-salma',
   role: UserRole.ADMIN,
-  centerId: 'center-1',
+  centerId: DEFAULT_CENTER_ID,
 };
 
 const accountantActor: PermissionActor = {
-  userId: 'u3',
+  userId: 'u-mostafa',
   role: UserRole.ACCOUNTANT,
-  centerId: 'center-1',
+  centerId: DEFAULT_CENTER_ID,
 };
 
 const receptionistActor: PermissionActor = {
-  userId: 'u4',
+  userId: 'u-rec-test',
   role: UserRole.RECEPTIONIST,
-  centerId: 'center-1',
+  centerId: DEFAULT_CENTER_ID,
 };
 
 const teacherActor: PermissionActor = {
-  userId: 'u5',
+  userId: 'u-mohamed',
   role: UserRole.TEACHER,
-  centerId: 'center-1',
-  teacherId: 't1',
+  centerId: DEFAULT_CENTER_ID,
+  teacherId: 't-mohamed',
 };
 
-const parentActor: PermissionActor = {
-  userId: 'u6',
+const mimiParentActor: PermissionActor = {
+  userId: 'u-mimi',
   role: UserRole.PARENT,
-  centerId: 'center-1',
-  parentPhone: '01002349871',
+  centerId: DEFAULT_CENTER_ID,
+  guardianId: 'g-mimi',
+};
+
+const ibrahimParentActor: PermissionActor = {
+  userId: 'u-ibrahim',
+  role: UserRole.PARENT,
+  centerId: DEFAULT_CENTER_ID,
+  guardianId: 'g-ibrahim',
 };
 
 test('Permission matrix: Owner & Admin boundaries', () => {
@@ -121,53 +129,53 @@ test('Permission matrix: Accountant, Receptionist, Teacher, and Parent', () => {
 
   // Teacher: scoped to own teacherId / groups
   const sampleGroups = [
-    { id: 'g1', teacherId: 't1' },
-    { id: 'g2', teacherId: 't2' },
+    { id: 'g-moh', teacherId: 't-mohamed' },
+    { id: 'g-ahm', teacherId: 't-ahmed' },
   ];
   assert.equal(
-    can(teacherActor, 'take_attendance', 'sessions', { groupId: 'g1', groups: sampleGroups }),
+    can(teacherActor, 'take_attendance', 'sessions', { groupId: 'g-moh', groups: sampleGroups }),
     true
   );
   assert.equal(
-    can(teacherActor, 'take_attendance', 'sessions', { groupId: 'g2', groups: sampleGroups }),
+    can(teacherActor, 'take_attendance', 'sessions', { groupId: 'g-ahm', groups: sampleGroups }),
     false
   );
   assert.equal(
-    can(teacherActor, 'enter_assessments', 'assessments', { groupId: 'g1', groups: sampleGroups }),
+    can(teacherActor, 'enter_assessments', 'assessments', { groupId: 'g-moh', groups: sampleGroups }),
     true
   );
   assert.equal(
-    can(teacherActor, 'enter_assessments', 'assessments', { groupId: 'g2', groups: sampleGroups }),
+    can(teacherActor, 'enter_assessments', 'assessments', { groupId: 'g-ahm', groups: sampleGroups }),
     false
   );
-  assert.equal(can(teacherActor, 'view', 'teacherShares', { teacherId: 't1' }), true);
-  assert.equal(can(teacherActor, 'view', 'teacherShares', { teacherId: 't2' }), false);
+  assert.equal(can(teacherActor, 'view', 'teacherShares', { teacherId: 't-mohamed' }), true);
+  assert.equal(can(teacherActor, 'view', 'teacherShares', { teacherId: 't-ahmed' }), false);
   assert.equal(can(teacherActor, 'view', 'expenses'), false);
   assert.equal(can(teacherActor, 'view', 'invoices'), false);
 
-  // Parent: parentPortal only + own children phone normalization
+  // Parent: parentPortal only + own linked student scoping
   assert.equal(normalizePhoneDigits('+20 100-234-9871'), '01002349871');
-  assert.equal(can(parentActor, 'view', 'parentPortal'), true);
+  assert.equal(can(mimiParentActor, 'view', 'parentPortal'), true);
   assert.equal(
-    can(parentActor, 'view', 'students', { parentPhone: '01002349871' }),
+    can(mimiParentActor, 'view', 'students', { studentId: 'st-mahmoud', guardianIds: ['g-mimi'] }),
     true
   );
   assert.equal(
-    can(parentActor, 'view', 'students', { parentPhone: '01119998887' }),
+    can(mimiParentActor, 'view', 'students', { studentId: 'st-faisal', guardianIds: ['g-ibrahim'] }),
     false
   );
-  assert.equal(can(parentActor, 'create', 'students'), false);
-  assert.equal(can(parentActor, 'view', 'expenses'), false);
+  assert.equal(can(mimiParentActor, 'create', 'students'), false);
+  assert.equal(can(mimiParentActor, 'view', 'expenses'), false);
 });
 
 test('Screen guards & default home screen by role', () => {
   assert.equal(getDefaultHomeScreen(ownerActor), ScreenId.DASHBOARD);
-  assert.equal(getDefaultHomeScreen(parentActor), ScreenId.PARENT_PORTAL);
+  assert.equal(getDefaultHomeScreen(mimiParentActor), ScreenId.PARENT_PORTAL);
   assert.equal(getDefaultHomeScreen(null), ScreenId.LOGIN);
 
-  assert.equal(canAccessScreen(parentActor, ScreenId.DASHBOARD), false);
-  assert.equal(canAccessScreen(parentActor, ScreenId.STUDENTS), false);
-  assert.equal(canAccessScreen(parentActor, ScreenId.PARENT_PORTAL), true);
+  assert.equal(canAccessScreen(mimiParentActor, ScreenId.DASHBOARD), false);
+  assert.equal(canAccessScreen(mimiParentActor, ScreenId.STUDENTS), false);
+  assert.equal(canAccessScreen(mimiParentActor, ScreenId.PARENT_PORTAL), true);
 
   assert.equal(canAccessScreen(receptionistActor, ScreenId.PAYMENTS), true);
   assert.equal(canAccessScreen(receptionistActor, ScreenId.EXPENSES), false);
@@ -194,18 +202,53 @@ test('Repository-level enforcement throws PermissionError on unauthorized writes
     enforcePermissions: true,
   });
 
-  // 1) Receptionist can create student & payment, CANNOT create expense or update/delete payment
+  // Seed 2 groups so teacher-ownership check can be tested even with clean initial groups
+  const gMoh = repos.groups.create({
+    centerId: DEFAULT_CENTER_ID,
+    name: 'مجموعة محمد عماد',
+    subject: 'لغة فرنسية',
+    teacherId: 't-mohamed',
+    stage: 'الصف الثالث الثانوي',
+    days: ['السبت'],
+    startTime: '16:00',
+    endTime: '18:00',
+    room: 'قاعة 1',
+    roomId: 'r1',
+    capacity: 30,
+    monthlyPrice: 400,
+    startDate: '2026-11-16',
+    status: 'active',
+  });
+  const gAhm = repos.groups.create({
+    centerId: DEFAULT_CENTER_ID,
+    name: 'مجموعة أحمد جاويش',
+    subject: 'لغة فرنسية',
+    teacherId: 't-ahmed',
+    stage: 'الصف الثالث الثانوي',
+    days: ['الأحد'],
+    startTime: '16:00',
+    endTime: '18:00',
+    room: 'قاعة 1',
+    roomId: 'r1',
+    capacity: 30,
+    monthlyPrice: 400,
+    startDate: '2026-11-16',
+    status: 'active',
+  });
+  repos.students.update('st-mahmoud', { groupIds: [gMoh.id] });
+
+  // 1) Receptionist can create payment, CANNOT create expense or update/delete payment
   activeActor = receptionistActor;
   const createdPay = repos.payments.create({
-    centerId: 'center-1',
+    centerId: DEFAULT_CENTER_ID,
     receiptNumber: 'RCP-TEST-1',
-    invoiceId: 'inv1',
-    studentId: 's1',
-    groupId: 'g1',
+    invoiceId: 'inv-101',
+    studentId: 'st-mahmoud',
+    groupId: gMoh.id,
     amount: 100,
-    remainingAfter: 380,
+    remainingAfter: 300,
     method: 'نقدي',
-    date: '2026-11-12',
+    date: '2026-11-16',
     recordedBy: 'استقبال',
   });
   assert.equal(createdPay.receiptNumber, 'RCP-TEST-1');
@@ -218,25 +261,25 @@ test('Repository-level enforcement throws PermissionError on unauthorized writes
   assert.throws(
     () =>
       repos.expenses.create({
-        centerId: 'center-1',
-        date: '2026-11-12',
+        centerId: DEFAULT_CENTER_ID,
+        date: '2026-11-16',
         category: 'أخرى',
         description: 'محاولة غير مصرح بها',
         amount: 50,
-        addedBy: 'u4',
+        addedBy: 'u-rec-test',
       }),
     PermissionError
   );
   assert.throws(
     () =>
       repos.discounts.create({
-        centerId: 'center-1',
-        studentId: 's1',
+        centerId: DEFAULT_CENTER_ID,
+        studentId: 'st-mahmoud',
         title: 'خصم غير مصرح',
         type: 'fixed',
         value: 50,
         amount: 50,
-        createdBy: 'u4',
+        createdBy: 'u-rec-test',
         createdAt: new Date().toISOString(),
       }),
     PermissionError
@@ -247,7 +290,7 @@ test('Repository-level enforcement throws PermissionError on unauthorized writes
   assert.throws(
     () =>
       repos.students.create({
-        centerId: 'center-1',
+        centerId: DEFAULT_CENTER_ID,
         code: '',
         fullName: 'طالب غير مصرح',
         name: 'طالب غير مصرح',
@@ -255,7 +298,7 @@ test('Repository-level enforcement throws PermissionError on unauthorized writes
         parent: { name: 'ولي أمر', phone: '01000000001' },
         parentName: 'ولي أمر',
         parentPhone: '01000000001',
-        groupIds: ['g1'],
+        groupIds: [gMoh.id],
         status: 'active',
         paymentStatus: 'pending',
         lastAttendance: 'لم يحضر بعد',
@@ -265,7 +308,7 @@ test('Repository-level enforcement throws PermissionError on unauthorized writes
       }),
     PermissionError
   );
-  assert.throws(() => repos.students.update('s1', { status: 'inactive' }), PermissionError);
+  assert.throws(() => repos.students.update('st-mahmoud', { status: 'inactive' }), PermissionError);
   assert.throws(
     () =>
       repos.meta.setCenterSettings({
@@ -276,12 +319,12 @@ test('Repository-level enforcement throws PermissionError on unauthorized writes
   );
   // Accountant CAN create expenses & update message templates
   const accExp = repos.expenses.create({
-    centerId: 'center-1',
-    date: '2026-11-12',
+    centerId: DEFAULT_CENTER_ID,
+    date: '2026-11-16',
     category: 'مستلزمات',
     description: 'أقلام سبورة',
     amount: 120,
-    addedBy: 'u3',
+    addedBy: 'u-mostafa',
   });
   assert.equal(accExp.amount, 120);
 
@@ -295,27 +338,23 @@ test('Repository-level enforcement throws PermissionError on unauthorized writes
       }),
     PermissionError
   );
-  assert.throws(() => repos.users.update('u1', { name: 'تعديل المالك' }), PermissionError);
-  assert.throws(() => repos.users.update('u4', { role: UserRole.OWNER }), PermissionError);
+  assert.throws(() => repos.users.update('u-hamed', { name: 'تعديل المالك' }), PermissionError);
+  assert.throws(() => repos.users.update('u-mostafa', { role: UserRole.OWNER }), PermissionError);
 
   // 4) Teacher CANNOT create assessment for another teacher's group
   activeActor = teacherActor;
-  const foreignGroup = repos.groups.list(); // scoped to t1 only!
-  assert.ok(foreignGroup.every((g) => g.teacherId === 't1'));
+  const visibleGroups = repos.groups.list(); // scoped to t-mohamed only
+  assert.equal(visibleGroups.length, 1);
+  assert.equal(visibleGroups[0].teacherId, 't-mohamed');
 
-  activeActor = ownerActor;
-  const t2Group = repos.groups.list().find((g) => g.teacherId !== 't1');
-  assert.ok(t2Group, 'Seed should include at least one group owned by another teacher');
-
-  activeActor = teacherActor;
   assert.throws(
     () =>
       repos.assessments.create({
-        centerId: 'center-1',
+        centerId: DEFAULT_CENTER_ID,
         title: 'اختبار غير مصرح',
         type: 'كويز',
-        groupId: t2Group.id,
-        date: '2026-11-12',
+        groupId: gAhm.id,
+        date: '2026-11-16',
         maxScore: 50,
         status: 'draft',
         grades: [],
@@ -324,49 +363,91 @@ test('Repository-level enforcement throws PermissionError on unauthorized writes
   );
 
   // 5) Parent CANNOT write anything
-  activeActor = parentActor;
+  activeActor = mimiParentActor;
   assert.throws(
-    () => repos.students.update('s1', { fullName: 'تعديل ولي الأمر' }),
+    () => repos.students.update('st-mahmoud', { fullName: 'تعديل ولي الأمر' }),
     PermissionError
   );
 });
 
-test('Repository-level read scoping isolates Teacher and Parent data cleanly', () => {
+test('Repository-level read scoping isolates Teacher and Guardians (ميمي البنا / إبراهيم إمام) strictly', () => {
   const storage = new MockStorage();
   const adapter = new LocalStorageAdapter({ storage, debounceMs: 0 });
 
-  let activeActor: PermissionActor | null = teacherActor;
+  let activeActor: PermissionActor | null = ownerActor;
   const repos = createRepositories(adapter, {
     getActor: () => activeActor,
     enforcePermissions: true,
   });
 
-  // Teacher t1 sees ONLY own groups, own students, own teacher record, NO invoices/expenses
-  const teacherGroups = repos.groups.list();
-  assert.ok(teacherGroups.length > 0);
-  assert.ok(teacherGroups.every((g) => g.teacherId === 't1'));
+  const gMoh = repos.groups.create({
+    centerId: DEFAULT_CENTER_ID,
+    name: 'مجموعة 1',
+    subject: 'لغة فرنسية',
+    teacherId: 't-mohamed',
+    stage: 'الصف الثالث الثانوي',
+    days: ['السبت'],
+    startTime: '16:00',
+    endTime: '18:00',
+    room: 'قاعة 1',
+    roomId: 'r1',
+    capacity: 30,
+    monthlyPrice: 400,
+    startDate: '2026-11-16',
+    status: 'active',
+  });
+  const gAhm = repos.groups.create({
+    centerId: DEFAULT_CENTER_ID,
+    name: 'مجموعة 2',
+    subject: 'لغة فرنسية',
+    teacherId: 't-ahmed',
+    stage: 'الصف الثالث الثانوي',
+    days: ['الأحد'],
+    startTime: '16:00',
+    endTime: '18:00',
+    room: 'قاعة 1',
+    roomId: 'r1',
+    capacity: 30,
+    monthlyPrice: 400,
+    startDate: '2026-11-16',
+    status: 'active',
+  });
+  repos.students.update('st-mahmoud', { groupIds: [gMoh.id] });
+  repos.students.update('st-faisal', { groupIds: [gAhm.id] });
 
-  const teacherGroupIdSet = new Set(teacherGroups.map((g) => g.id));
+  // Teacher t-mohamed sees ONLY own groups, own students, own teacher record, NO invoices/expenses
+  activeActor = teacherActor;
+  const teacherGroups = repos.groups.list();
+  assert.equal(teacherGroups.length, 1);
+  assert.ok(teacherGroups.every((g) => g.teacherId === 't-mohamed'));
+
   const teacherStudents = repos.students.list();
-  assert.ok(teacherStudents.length > 0);
-  assert.ok(
-    teacherStudents.every((s) => s.groupIds.some((gid) => teacherGroupIdSet.has(gid)))
-  );
+  assert.equal(teacherStudents.length, 1);
+  assert.equal(teacherStudents[0].id, 'st-mahmoud');
 
   assert.equal(repos.invoices.list().length, 0);
   assert.equal(repos.payments.list().length, 0);
   assert.equal(repos.expenses.list().length, 0);
   assert.equal(repos.teachers.list().length, 1);
-  assert.equal(repos.teachers.get('t2'), undefined);
+  assert.equal(repos.teachers.get('t-ahmed'), undefined);
 
-  // Parent sees ONLY children sharing parentPhone 01002349871 (s1 & s9)
-  activeActor = parentActor;
-  const parentStudents = repos.students.list();
-  assert.equal(parentStudents.length, 2);
-  assert.ok(parentStudents.every((s) => s.id === 's1' || s.id === 's9'));
-  assert.equal(repos.students.get('s2'), undefined);
-  assert.ok(repos.invoices.list().every((inv) => inv.studentId === 's1' || inv.studentId === 's9'));
-  assert.ok(repos.payments.list().every((p) => p.studentId === 's1' || p.studentId === 's9'));
+  // Guardian 1: ميمي البنا sees ONLY محمود ميمي
+  activeActor = mimiParentActor;
+  const mimiStudents = repos.students.list();
+  assert.equal(mimiStudents.length, 1);
+  assert.equal(mimiStudents[0].id, 'st-mahmoud');
+  assert.equal(mimiStudents[0].name, 'محمود ميمي');
+  assert.equal(repos.students.get('st-faisal'), undefined);
+  assert.ok(repos.invoices.list().every((inv) => inv.studentId === 'st-mahmoud'));
   assert.equal(repos.expenses.list().length, 0);
   assert.equal(repos.teachers.list().length, 0);
+
+  // Guardian 2: إبراهيم إمام sees ONLY فيصل إمام
+  activeActor = ibrahimParentActor;
+  const ibrahimStudents = repos.students.list();
+  assert.equal(ibrahimStudents.length, 1);
+  assert.equal(ibrahimStudents[0].id, 'st-faisal');
+  assert.equal(ibrahimStudents[0].name, 'فيصل إمام');
+  assert.equal(repos.students.get('st-mahmoud'), undefined);
+  assert.ok(repos.invoices.list().every((inv) => inv.studentId === 'st-faisal'));
 });

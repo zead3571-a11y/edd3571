@@ -62,16 +62,3 @@ export async function verifyPasswordWithSalt(
   return diff === 0;
 }
 
-/**
- * Deterministic fallback hash helper used purely for initial static seed generation.
- * Matches SHA-256(salt + ":" + "EduFlow@2026") for pre-seeded demo accounts.
- */
-export const PROTOTYPE_DEMO_PASSWORD_PLAIN = 'EduFlow@2026';
-export const PROTOTYPE_SEED_SALTS = {
-  u1: 'eduflow-salt-u1-owner',
-  u2: 'eduflow-salt-u2-admin',
-  u3: 'eduflow-salt-u3-acc',
-  u4: 'eduflow-salt-u4-rec',
-  u5: 'eduflow-salt-u5-tch',
-  u6: 'eduflow-salt-u6-parent',
-} as const;

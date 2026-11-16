@@ -49,7 +49,7 @@ export const AssessmentsScreen: React.FC = () => {
   const [title, setTitle] = useState('');
   const [type, setType] = useState<AssessmentType>('امتحان');
   const [groupId, setGroupId] = useState(groups[0]?.id || '');
-  const [date, setDate] = useState('2026-11-14');
+  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [maxScore, setMaxScore] = useState('50');
   const [formErr, setFormErr] = useState('');
 

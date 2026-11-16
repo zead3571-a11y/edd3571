@@ -7,6 +7,7 @@ import {
   buildStudentParentReportPdf,
 } from './pdfExportLogic';
 import {
+  DEFAULT_CENTER_ID,
   INITIAL_ASSESSMENTS,
   INITIAL_CENTER_SETTINGS,
   INITIAL_EXPENSES,
@@ -17,6 +18,7 @@ import {
   INITIAL_STUDENTS,
   INITIAL_TEACHERS,
 } from '../data/seedData';
+import { AttendanceSession, Group } from '../types/eduflow';
 
 test('buildFinancialReportPdf computes revenue, expenses, and share summary', () => {
   const payload = buildFinancialReportPdf({
@@ -35,7 +37,7 @@ test('buildFinancialReportPdf computes revenue, expenses, and share summary', ()
 
   assert.equal(payload.tables.length, 4);
   assert.ok(payload.title.includes('التقرير المالي'));
-  assert.ok(payload.shareText.includes(INITIAL_CENTER_SETTINGS.name));
+  assert.ok(payload.shareText.includes('سنتر حامد البيلي'));
   assert.equal(payload.kpis.length, 4);
 });
 
@@ -49,18 +51,48 @@ test('buildAttendanceHistoryPdf filters by student and builds parent greeting', 
     fromDate: '2026-11-01',
     toDate: '2026-11-30',
     groupFilter: 'all',
-    studentFilter: 's1',
+    studentFilter: 'st-mahmoud',
   });
 
   assert.equal(payload.tables.length, 2);
-  assert.ok(payload.parentGreeting?.includes('يوسف أحمد محمود'));
-  assert.equal(payload.parentPhone, '01002349871');
+  assert.ok(payload.parentGreeting?.includes('محمود ميمي'));
+  assert.equal(payload.parentPhone, '');
 });
 
 test('buildSessionAttendancePdf summarizes a single session roster', () => {
-  const session = INITIAL_SESSIONS[0];
-  const grp = INITIAL_GROUPS.find((g) => g.id === session.groupId);
-  const tch = INITIAL_TEACHERS.find((t) => t.id === grp?.teacherId);
+  const grp: Group = {
+    id: 'g-pdf-1',
+    centerId: DEFAULT_CENTER_ID,
+    name: 'مجموعة لغة فرنسية',
+    subject: 'لغة فرنسية',
+    teacherId: 't-mohamed',
+    stage: 'الصف الثالث الثانوي',
+    days: ['السبت'],
+    startTime: '16:00',
+    endTime: '18:00',
+    room: 'قاعة 1',
+    roomId: 'r1',
+    capacity: 30,
+    monthlyPrice: 400,
+    startDate: '2026-11-16',
+    status: 'active',
+  };
+  const session: AttendanceSession = {
+    id: 'sess-pdf-1',
+    centerId: DEFAULT_CENTER_ID,
+    groupId: grp.id,
+    teacherId: 't-mohamed',
+    date: '2026-11-16',
+    timeLabel: '16:00',
+    roomId: 'r1',
+    type: 'regular',
+    status: 'recorded',
+    entries: [
+      { studentId: 'st-mahmoud', status: 'present' },
+      { studentId: 'st-faisal', status: 'late' },
+    ],
+  };
+  const tch = INITIAL_TEACHERS.find((t) => t.id === grp.teacherId);
 
   const payload = buildSessionAttendancePdf({
     centerSettings: INITIAL_CENTER_SETTINGS,
@@ -88,5 +120,5 @@ test('buildStudentParentReportPdf includes attendance, invoices, and assessments
 
   assert.equal(payload.kind, 'student_parent_report');
   assert.equal(payload.tables.length, 3);
-  assert.ok(payload.shareText.includes(student.name));
+  assert.ok(payload.shareText.includes('محمود ميمي'));
 });

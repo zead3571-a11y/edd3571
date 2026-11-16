@@ -1,0 +1,28 @@
+{
+  "backupVersion": 1,
+  "exportedAt": "2026-11-16T00:00:00.000Z",
+  "purpose": "Pre-migration archive of legacy center-1 dataset before replacing with center-hamed-elbailey",
+  "sanitized": true,
+  "legacyCenter": {
+    "id": "center-1",
+    "name": "سنتر النخبة التعليمي",
+    "governorate": "القاهرة",
+    "city": "مدينة نصر",
+    "address": "14 شارع مصطفى النحاس، مدينة نصر",
+    "currentPlanId": "pro",
+    "removedAt": "2026-11-16T00:00:00.000Z",
+    "replacedByCenterId": "center-hamed-elbailey"
+  },
+  "legacyEntityCounts": {
+    "users": 6,
+    "teachers": 5,
+    "students": 12,
+    "groups": 6,
+    "rooms": 4,
+    "sessions": 3,
+    "invoices": 8,
+    "payments": 3,
+    "expenses": 6,
+    "assessments": 4
+  }
+}

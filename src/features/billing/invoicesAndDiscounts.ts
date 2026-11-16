@@ -53,7 +53,8 @@ export function buildDueDateForMonth(monthKey: string, dueDay: number): string {
   if (/^\d{4}-\d{2}$/.test(key)) {
     return `${key}-${String(day).padStart(2, '0')}`;
   }
-  return '2026-12-01';
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
 }
 
 /**
@@ -236,9 +237,64 @@ export function previewBulkInvoices(params: {
   params.students
     .filter((s) => s.status === 'active')
     .forEach((student) => {
-      student.groupIds
-        .filter((gid) => params.groupIds.includes(gid))
-        .forEach((gid) => {
+      const matchedGroupIds = student.groupIds.filter((gid) => params.groupIds.includes(gid));
+
+      if (matchedGroupIds.length === 0 && student.groupIds.length === 0) {
+        const fee = student.monthlyFee ?? student.monthlyFeeOverride ?? 0;
+        if (fee <= 0) return;
+
+        const duplicate = params.existingInvoices.some((inv) => {
+          if (inv.studentId !== student.id || inv.groupId !== 'general') return false;
+          const invKey = normalizeMonthKey(inv.monthKey || inv.month);
+          return invKey === monthKey || inv.month === monthLabel;
+        });
+
+        if (duplicate) {
+          skippedCount += 1;
+          return;
+        }
+
+        const generalGroup: Group = {
+          id: 'general',
+          centerId: student.centerId,
+          name: 'اشتراك شهري عام',
+          subject: 'اشتراك شهري',
+          teacherId: '',
+          stage: student.stage,
+          days: [],
+          startTime: '',
+          endTime: '',
+          room: '—',
+          roomId: '',
+          capacity: 0,
+          monthlyPrice: fee,
+          startDate: dueDate,
+          status: 'active',
+        };
+        const rank = siblingRanks.get(student.id) || 1;
+        const pricing = calculateInvoicePricing({
+          student,
+          group: generalGroup,
+          siblingRank: rank,
+          discountPolicy: params.discountPolicy,
+          monthKey,
+        });
+        const discountTotal = pricing.discountLines.reduce((s, d) => s + d.amount, 0);
+
+        itemsToCreate.push({
+          student,
+          group: generalGroup,
+          siblingRank: rank,
+          baseAmount: pricing.baseAmount,
+          discountLines: pricing.discountLines,
+          discountTotal,
+          netAmount: pricing.netAmount,
+          isScholarshipFree: pricing.isScholarshipFree,
+        });
+        return;
+      }
+
+      matchedGroupIds.forEach((gid) => {
           const group = params.groups.find((g) => g.id === gid);
           if (!group) return;
 

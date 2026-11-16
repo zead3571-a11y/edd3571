@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   AlertCircle,
   ArrowRight,
@@ -14,7 +14,6 @@ import {
 } from 'lucide-react';
 import { useEduflow } from '../../context/EduflowContext';
 import { ScreenId, UserRole } from '../../types/eduflow';
-import { normalizePhoneDigits } from '../../permissions/permissions';
 import {
   Button,
   Card,
@@ -22,26 +21,30 @@ import {
   EmptyState,
   Field,
   InitialAvatar,
+  SelectInput,
   StatusChip,
   TextInput,
   paymentStatusChipProps,
 } from '../ui/Primitives';
-import { formatEGP } from '../../utils/eduflowLogic';
+import { formatDateDDMMYYYY, formatEGP } from '../../utils/eduflowLogic';
 import { buildStudentParentReportPdf } from '../../utils/pdfExportLogic';
 
 // 21) Parent Portal (Mobile-first calm tone, large type, centered 720px on Desktop, no sidebar)
 export const ParentPortalScreen: React.FC = () => {
   const {
     authSession,
-    currentActor,
     currentRole,
+    guardians,
+    studentGuardians,
     students,
     groups,
     sessions,
+    attendanceRecords,
     invoices,
     payments,
     assessments,
     studentAccounts,
+    notifications,
     centerSettings,
     loginWithCredentials,
     activateParentByPhone,
@@ -51,42 +54,84 @@ export const ParentPortalScreen: React.FC = () => {
     showToast,
   } = useEduflow();
 
-  const [portalScreen, setPortalScreen] = useState<'home' | 'invite' | 'login' | 'notifications'>('home');
-  const [childTab, setChildTab] = useState<'attendance' | 'assessments' | 'payments'>('attendance');
-  const [noDueDemo, setNoDueDemo] = useState(false);
+  const [portalScreen, setPortalScreen] = useState<'home' | 'invite' | 'login' | 'notifications'>(
+    'home'
+  );
+  const [childTab, setChildTab] = useState<'attendance' | 'assessments' | 'payments'>(
+    'attendance'
+  );
+  const [previewGuardianId, setPreviewGuardianId] = useState<string>('');
 
-  const targetPhone = normalizePhoneDigits(currentActor?.parentPhone || '01002349871');
-  const childrenList =
-    currentRole === UserRole.PARENT
-      ? students
-      : students.filter(
-          (s) =>
-            normalizePhoneDigits(s.parentPhone) === targetPhone ||
-            normalizePhoneDigits(s.parent?.phone) === targetPhone
-        );
+  const isOwnerPreview = authSession?.role === UserRole.OWNER;
+  const activePreviewGuardianId =
+    previewGuardianId || guardians[0]?.id || '';
 
-  const [activeChildId, setActiveChildId] = useState(childrenList[0]?.id || '');
+  const childrenList = useMemo(() => {
+    if (!authSession) return [];
+    if (currentRole === UserRole.PARENT) {
+      return students;
+    }
+    if (isOwnerPreview && activePreviewGuardianId) {
+      const linkedIds = new Set(
+        studentGuardians
+          .filter((l) => l.guardianId === activePreviewGuardianId)
+          .map((l) => l.studentId)
+      );
+      return students.filter(
+        (s) =>
+          linkedIds.has(s.id) || Boolean(s.guardianIds?.includes(activePreviewGuardianId))
+      );
+    }
+    return students;
+  }, [authSession, currentRole, isOwnerPreview, activePreviewGuardianId, studentGuardians, students]);
+
+  const [activeChildId, setActiveChildId] = useState<string>('');
   const activeChild = childrenList.find((c) => c.id === activeChildId) || childrenList[0];
 
-  // Invite / Login inputs
-  const [invitePhone, setInvitePhone] = useState('01002349871');
-  const [inviteCode, setInviteCode] = useState('NK-4829');
+  // Invite / Login inputs (no hardcoded passwords or phones)
+  const [invitePhone, setInvitePhone] = useState('');
+  const [inviteCode, setInviteCode] = useState('');
   const [invitePass, setInvitePass] = useState('');
-  const [loginPhone, setLoginPhone] = useState('01002349871');
-  const [loginPass, setLoginPass] = useState('EduFlow@2026');
+  const [loginIdentifier, setLoginIdentifier] = useState('');
+  const [loginPass, setLoginPass] = useState('');
   const [portalError, setPortalError] = useState('');
   const [portalLoading, setPortalLoading] = useState(false);
 
-  const childInvoices =
-    noDueDemo || !activeChild
-      ? []
-      : invoices.filter((i) => i.studentId === activeChild.id && i.status !== 'paid');
+  const childInvoices = activeChild
+    ? invoices.filter((i) => i.studentId === activeChild.id && i.status !== 'paid')
+    : [];
   const childReceipts = activeChild
     ? payments.filter((p) => p.studentId === activeChild.id)
     : [];
   const childAssessments = activeChild
     ? assessments.filter((a) => a.grades.some((g) => g.studentId === activeChild.id))
     : [];
+
+  const childAttendanceEntries = useMemo(() => {
+    if (!activeChild) return [];
+    return sessions
+      .filter(
+        (sess) =>
+          activeChild.groupIds.includes(sess.groupId) ||
+          sess.entries.some((e) => e.studentId === activeChild.id)
+      )
+      .map((sess) => {
+        const entry = sess.entries.find((e) => e.studentId === activeChild.id);
+        const rec = attendanceRecords.find(
+          (r) => r.sessionId === sess.id && r.studentId === activeChild.id
+        );
+        const grp = groups.find((g) => g.id === sess.groupId);
+        return {
+          sessionId: sess.id,
+          date: sess.date,
+          timeLabel: sess.timeLabel,
+          groupName: grp?.name || 'حصة دراسية',
+          status: rec?.status || entry?.status || 'unrecorded',
+        };
+      })
+      .filter((row) => row.status !== 'unrecorded')
+      .sort((a, b) => b.date.localeCompare(a.date));
+  }, [activeChild, sessions, attendanceRecords, groups]);
 
   return (
     <div className="min-h-screen bg-[#F4F7FA] pb-20">
@@ -130,7 +175,7 @@ export const ParentPortalScreen: React.FC = () => {
                   portalScreen === 'login' ? 'bg-white text-[#0F2A4A]' : 'text-[#5B6B80]'
                 }`}
               >
-                دخول الهاتف
+                تسجيل الدخول
               </button>
             </div>
 
@@ -168,6 +213,32 @@ export const ParentPortalScreen: React.FC = () => {
 
       {/* Centered 720px Column */}
       <main className="max-w-[720px] mx-auto px-4 py-6 space-y-5">
+        {isOwnerPreview && guardians.length > 0 && portalScreen === 'home' && (
+          <Card className="p-4 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-xs font-bold text-[#0F2A4A]">معاينة بوابة ولي الأمر (صلاحية المالك)</p>
+              <p className="text-[11px] text-[#5B6B80]">
+                اختر ولي أمر لمعاينة ما يظهر له فقط من بيانات أبنائه
+              </p>
+            </div>
+            <SelectInput
+              aria-label="اختيار ولي الأمر للمعاينة"
+              value={activePreviewGuardianId}
+              onChange={(e) => {
+                setPreviewGuardianId(e.target.value);
+                setActiveChildId('');
+              }}
+              className="w-56"
+            >
+              {guardians.map((g) => (
+                <option key={g.id} value={g.id}>
+                  {g.name}
+                </option>
+              ))}
+            </SelectInput>
+          </Card>
+        )}
+
         {portalScreen === 'invite' && (
           <Card className="p-6 space-y-4">
             <h1 className="text-xl font-bold text-[#0F2A4A]">تفعيل حساب ولي الأمر لأول مرة</h1>
@@ -188,6 +259,7 @@ export const ParentPortalScreen: React.FC = () => {
                 id="pp-invite-phone"
                 dir="ltr"
                 className="text-right tabular-nums"
+                placeholder="01xxxxxxxxx"
                 value={invitePhone}
                 onChange={(e) => {
                   setInvitePhone(e.target.value);
@@ -200,6 +272,7 @@ export const ParentPortalScreen: React.FC = () => {
                 id="pp-code"
                 dir="ltr"
                 className="text-right font-bold tabular-nums"
+                placeholder="مثال: HB-1001"
                 value={inviteCode}
                 onChange={(e) => setInviteCode(e.target.value)}
               />
@@ -255,14 +328,15 @@ export const ParentPortalScreen: React.FC = () => {
                 <span>{portalError}</span>
               </div>
             )}
-            <Field label="رقم موبايل ولي الأمر" htmlFor="pp-phone">
+            <Field label="البريد الإلكتروني أو رقم الموبايل" htmlFor="pp-phone">
               <TextInput
                 id="pp-phone"
                 dir="ltr"
-                className="text-right tabular-nums"
-                value={loginPhone}
+                className="text-right"
+                placeholder="mimi@hamed-elbailey.demo أو رقم الموبايل"
+                value={loginIdentifier}
                 onChange={(e) => {
-                  setLoginPhone(e.target.value);
+                  setLoginIdentifier(e.target.value);
                   setPortalError('');
                 }}
               />
@@ -286,10 +360,10 @@ export const ParentPortalScreen: React.FC = () => {
               onClick={async () => {
                 setPortalError('');
                 setPortalLoading(true);
-                const res = await loginWithCredentials(loginPhone, loginPass);
+                const res = await loginWithCredentials(loginIdentifier, loginPass);
                 setPortalLoading(false);
                 if (!res.ok) {
-                  setPortalError(res.error || 'رقم الهاتف أو كلمة السر غير صحيحة.');
+                  setPortalError(res.error || 'بيانات الدخول غير صحيحة.');
                   return;
                 }
                 setPortalScreen('home');
@@ -303,39 +377,58 @@ export const ParentPortalScreen: React.FC = () => {
         {portalScreen === 'notifications' && (
           <div className="space-y-4">
             <h1 className="text-xl font-bold text-[#0F2A4A]">إشعارات متابعة الأبناء</h1>
-            <Card padding="p-0" className="divide-y divide-[#E2E8F0]">
-              <div className="p-4">
-                <p className="text-sm font-bold text-[#0F2A4A]">تم رصد درجة امتحان الفيزياء</p>
-                <p className="text-sm text-[#5B6B80] mt-1">
-                  حصل يوسف أحمد محمود على 48 من 50 في امتحان التأثير المغناطيسي.
-                </p>
-                <span className="text-xs text-[#5B6B80] mt-1 block">أمس</span>
-              </div>
-              <div className="p-4">
-                <p className="text-sm font-bold text-[#0F2A4A]">تأكيد استلام اشتراك نوفمبر</p>
-                <p className="text-sm text-[#5B6B80] mt-1">
-                  تم سداد 480 ج لمجموعة الفيزياء — إيصال رقم RCP-8841.
-                </p>
-                <span className="text-xs text-[#5B6B80] mt-1 block">12 نوفمبر 2026</span>
-              </div>
-            </Card>
+            {notifications.length === 0 ? (
+              <EmptyState
+                title="لا توجد إشعارات جديدة"
+                description="ستظهر هنا تنبيهات الحضور والغياب ونتائج الامتحانات وإيصالات الدفع الخاصة بأبنائك."
+              />
+            ) : (
+              <Card padding="p-0" className="divide-y divide-[#E2E8F0]">
+                {notifications.map((n) => (
+                  <div key={n.id} className="p-4">
+                    <p className="text-sm font-bold text-[#0F2A4A]">{n.title}</p>
+                    <p className="text-sm text-[#5B6B80] mt-1">{n.body}</p>
+                    <span className="text-xs text-[#5B6B80] mt-1 block">{n.relativeTime}</span>
+                  </div>
+                ))}
+              </Card>
+            )}
           </div>
         )}
 
-        {portalScreen === 'home' && !activeChild && (
+        {portalScreen === 'home' && !authSession && (
+          <Card className="p-6 text-center space-y-4">
+            <h1 className="text-xl font-bold text-[#0F2A4A]">
+              مرحباً بكم في بوابة أولياء الأمور — {centerSettings.name}
+            </h1>
+            <p className="text-sm text-[#5B6B80]">
+              سجّل الدخول بحساب ولي الأمر لمتابعة حضور أبنائك ودرجاتهم وفواتيرهم.
+            </p>
+            <div className="flex flex-wrap justify-center gap-2">
+              <Button onClick={() => setPortalScreen('login')}>
+                تسجيل دخول ولي الأمر
+              </Button>
+              <Button variant="secondary" onClick={() => setPortalScreen('invite')}>
+                تفعيل حساب لأول مرة
+              </Button>
+            </div>
+          </Card>
+        )}
+
+        {portalScreen === 'home' && authSession && !activeChild && (
           <EmptyState
-            title="لا يوجد طلاب مسجلون برقم ولي الأمر هذا"
-            description="تأكد من تسجيل رقم الموبايل لدى إدارة السنتر لربطه بملف أبنائك."
+            title="لا يوجد طلاب مرتبطون بهذا الحساب"
+            description="تأكد من ربط الطالب بحساب ولي الأمر لدى إدارة السنتر."
           />
         )}
 
-        {portalScreen === 'home' && activeChild && (
+        {portalScreen === 'home' && authSession && activeChild && (
           <>
             {/* Child Switcher Cards */}
             <div className="space-y-2.5">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="text-xs font-bold text-[#5B6B80]">
-                  اختر الابن / الابنة للمتابعة:
+                  بيانات الطالب للمتابعة:
                 </span>
                 <Button
                   size="sm"
@@ -434,89 +527,89 @@ export const ParentPortalScreen: React.FC = () => {
             {childTab === 'attendance' && (
               <Card className="p-5 space-y-4">
                 <div className="flex items-center justify-between">
-                  <h2 className="text-base font-bold text-[#0F2A4A]">
-                    ملخص حضور شهر نوفمبر 2026
-                  </h2>
+                  <h2 className="text-base font-bold text-[#0F2A4A]">سجل الحضور والغياب</h2>
                   <StatusChip tone="success" label={`حضور ${activeChild.attendanceRate}%`} />
                 </div>
 
-                <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
-                  {[
-                    { d: '02 نوف', s: 'present' },
-                    { d: '05 نوف', s: 'present' },
-                    { d: '07 نوف', s: 'present' },
-                    { d: '09 نوف', s: 'late' },
-                    { d: '10 نوف', s: 'present' },
-                    { d: '12 نوف', s: 'present' },
-                  ].map((item, idx) => (
-                    <div
-                      key={idx}
-                      className={`p-2.5 rounded-[8px] text-center tabular-nums ${
-                        item.s === 'present'
-                          ? 'bg-[#D1FAE5] text-[#065F46]'
-                          : 'bg-[#FEF3C7] text-[#92400E]'
-                      }`}
-                    >
-                      <span className="text-xs font-bold block">{item.d}</span>
-                      <span className="text-[11px]">
-                        {item.s === 'present' ? 'حاضر' : 'متأخر'}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-
-                <p className="text-sm text-[#5B6B80] pt-2 border-t border-[#E2E8F0]">
-                  لا توجد أيام غياب غير مبررة خلال الأسبوعين الماضيين.
-                </p>
+                {childAttendanceEntries.length === 0 ? (
+                  <p className="text-sm text-[#5B6B80]">
+                    لا توجد حصص حضور مسجلة للطالب حتى الآن.
+                  </p>
+                ) : (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                    {childAttendanceEntries.map((item) => (
+                      <div
+                        key={item.sessionId}
+                        className={`p-2.5 rounded-[8px] text-center tabular-nums ${
+                          item.status === 'present'
+                            ? 'bg-[#D1FAE5] text-[#065F46]'
+                            : item.status === 'late'
+                            ? 'bg-[#FEF3C7] text-[#92400E]'
+                            : 'bg-[#FEE2E2] text-[#991B1B]'
+                        }`}
+                      >
+                        <span className="text-xs font-bold block">
+                          {formatDateDDMMYYYY(item.date)}
+                        </span>
+                        <span className="text-[11px] block">{item.groupName}</span>
+                        <span className="text-[11px] font-semibold">
+                          {item.status === 'present'
+                            ? 'حاضر'
+                            : item.status === 'late'
+                            ? 'متأخر'
+                            : 'غائب'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </Card>
             )}
 
             {/* Assessments Tab */}
             {childTab === 'assessments' && (
               <div className="space-y-3">
-                {childAssessments.map((as) => {
-                  const gr = as.grades.find((g) => g.studentId === activeChild.id);
-                  const grp = groups.find((g) => g.id === as.groupId);
-                  return (
-                    <Card key={as.id} className="p-5 flex items-center justify-between gap-4">
-                      <div>
-                        <span className="text-xs text-[#5B6B80]">
-                          {grp?.subject} · {as.date}
-                        </span>
-                        <h3 className="text-base font-bold text-[#0F2A4A] mt-0.5">
-                          {as.title}
-                        </h3>
-                      </div>
-                      <div className="text-left shrink-0">
-                        <span className="text-xl font-bold text-[#0F766E] tabular-nums block">
-                          {gr?.score ?? '—'} / {as.maxScore}
-                        </span>
-                        <span className="text-xs text-[#5B6B80]">الدرجة</span>
-                      </div>
-                    </Card>
-                  );
-                })}
+                {childAssessments.length === 0 ? (
+                  <EmptyState
+                    title="لا توجد تقييمات مرصودة حتى الآن"
+                    description="ستظهر نتائج الاختبارات والتقييمات فور تصحيحها واعتمادها."
+                  />
+                ) : (
+                  childAssessments.map((as) => {
+                    const gr = as.grades.find((g) => g.studentId === activeChild.id);
+                    const grp = groups.find((g) => g.id === as.groupId);
+                    return (
+                      <Card key={as.id} className="p-5 flex items-center justify-between gap-4">
+                        <div>
+                          <span className="text-xs text-[#5B6B80]">
+                            {grp?.subject || 'مادة دراسية'} · {as.date}
+                          </span>
+                          <h3 className="text-base font-bold text-[#0F2A4A] mt-0.5">
+                            {as.title}
+                          </h3>
+                        </div>
+                        <div className="text-left shrink-0">
+                          <span className="text-xl font-bold text-[#0F766E] tabular-nums block">
+                            {gr?.score ?? '—'} / {as.maxScore}
+                          </span>
+                          <span className="text-xs text-[#5B6B80]">الدرجة</span>
+                        </div>
+                      </Card>
+                    );
+                  })
+                )}
               </div>
             )}
 
             {/* Payments Tab */}
             {childTab === 'payments' && (
               <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-base font-bold text-[#0F2A4A]">الفواتير المستحقة</h3>
-                  <button
-                    type="button"
-                    onClick={() => setNoDueDemo((v) => !v)}
-                    className="text-xs font-semibold text-[#5B6B80] underline cursor-pointer"
-                  >
-                    {noDueDemo ? 'عرض الفواتير' : 'معاينة حالة لا توجد مستحقات'}
-                  </button>
-                </div>
+                <h3 className="text-base font-bold text-[#0F2A4A]">الفواتير المستحقة</h3>
 
                 {childInvoices.length === 0 ? (
                   <EmptyState
                     title="لا توجد فواتير مستحقة"
-                    description="جميع الاشتراكات الشهرية الخاصة بالابن مسددة بالكامل. شكراً لالتزامكم."
+                    description="جميع الاشتراكات الشهرية الخاصة بالطالب مسددة بالكامل."
                   />
                 ) : (
                   childInvoices.map((inv) => {
@@ -536,51 +629,66 @@ export const ParentPortalScreen: React.FC = () => {
                 )}
 
                 <h3 className="text-base font-bold text-[#0F2A4A] pt-2">الإيصالات المسددة</h3>
-                <Card padding="p-0" className="divide-y divide-[#E2E8F0]">
-                  {childReceipts.map((rcp) => (
-                    <div key={rcp.id} className="p-4 flex items-center justify-between">
-                      <div>
-                        <p className="text-sm font-bold text-[#1E293B]">
-                          إيصال #{rcp.receiptNumber} ({rcp.method})
-                        </p>
-                        <p className="text-xs text-[#5B6B80] tabular-nums">{rcp.date}</p>
+                {childReceipts.length === 0 ? (
+                  <p className="text-xs text-[#5B6B80]">لا توجد إيصالات دفع مسجلة حتى الآن.</p>
+                ) : (
+                  <Card padding="p-0" className="divide-y divide-[#E2E8F0]">
+                    {childReceipts.map((rcp) => (
+                      <div key={rcp.id} className="p-4 flex items-center justify-between">
+                        <div>
+                          <p className="text-sm font-bold text-[#1E293B]">
+                            إيصال #{rcp.receiptNumber} ({rcp.method})
+                          </p>
+                          <p className="text-xs text-[#5B6B80] tabular-nums">{rcp.date}</p>
+                        </div>
+                        <span className="text-base font-bold text-[#065F46] tabular-nums">
+                          {formatEGP(rcp.amount)}
+                        </span>
                       </div>
-                      <span className="text-base font-bold text-[#065F46] tabular-nums">
-                        {formatEGP(rcp.amount)}
-                      </span>
-                    </div>
-                  ))}
-                </Card>
+                    ))}
+                  </Card>
+                )}
               </div>
             )}
 
             {/* Contact the Center Card */}
             <Card className="p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div>
-                <h3 className="text-base font-bold text-[#0F2A4A]">تواصل مع إدارة السنتر</h3>
+                <h3 className="text-base font-bold text-[#0F2A4A]">
+                  تواصل مع إدارة {centerSettings.name}
+                </h3>
                 <p className="text-xs text-[#5B6B80]">
-                  للاستفسار عن المواعيد أو إبلاغ الإدارة بعذر غياب مسبق
+                  {centerSettings.phone
+                    ? 'للاستفسار عن المواعيد أو إبلاغ الإدارة بعذر غياب مسبق'
+                    : 'تواصل مباشرة مع إدارة السنتر عند الحاجة'}
                 </p>
               </div>
-              <div className="flex items-center gap-2">
-                <a
-                  href={`tel:${centerSettings.phone}`}
-                  className="inline-flex items-center justify-center gap-2 min-h-[44px] px-4 rounded-[8px] border border-[#E2E8F0] bg-white text-sm font-bold text-[#0F2A4A] hover:bg-slate-50"
-                >
-                  <Phone className="w-4 h-4 text-[#0F766E]" />
-                  <span>اتصال هاتفي</span>
-                </a>
-                <button
-                  type="button"
-                  onClick={() =>
-                    showToast(`تم فتح محادثة واتساب مع استقبال السنتر (${centerSettings.phone})`, 'info')
-                  }
-                  className="inline-flex items-center justify-center gap-2 min-h-[44px] px-4 rounded-[8px] bg-[#0F766E] text-white text-sm font-bold hover:bg-[#0D655E] cursor-pointer"
-                >
-                  <MessageCircle className="w-4 h-4" />
-                  <span>واتساب السنتر</span>
-                </button>
-              </div>
+              {centerSettings.phone ? (
+                <div className="flex items-center gap-2">
+                  <a
+                    href={`tel:${centerSettings.phone}`}
+                    className="inline-flex items-center justify-center gap-2 min-h-[44px] px-4 rounded-[8px] border border-[#E2E8F0] bg-white text-sm font-bold text-[#0F2A4A] hover:bg-slate-50"
+                  >
+                    <Phone className="w-4 h-4 text-[#0F766E]" />
+                    <span>اتصال هاتفي</span>
+                  </a>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      showToast(
+                        `تم فتح محادثة واتساب مع استقبال السنتر (${centerSettings.phone})`,
+                        'info'
+                      )
+                    }
+                    className="inline-flex items-center justify-center gap-2 min-h-[44px] px-4 rounded-[8px] bg-[#0F766E] text-white text-sm font-bold hover:bg-[#0D655E] cursor-pointer"
+                  >
+                    <MessageCircle className="w-4 h-4" />
+                    <span>واتساب السنتر</span>
+                  </button>
+                </div>
+              ) : (
+                <span className="text-xs text-[#5B6B80]">لم يُسجل رقم هاتف للسنتر بعد</span>
+              )}
             </Card>
           </>
         )}
@@ -614,16 +722,17 @@ export const ParentPortalScreen: React.FC = () => {
           </button>
           <button
             type="button"
-            onClick={() => setPortalScreen('invite')}
+            onClick={() => setPortalScreen('login')}
             className={`flex flex-col items-center justify-center gap-1 text-xs font-bold cursor-pointer ${
-              portalScreen === 'invite' ? 'text-[#0F766E]' : 'text-[#5B6B80]'
+              portalScreen === 'login' ? 'text-[#0F766E]' : 'text-[#5B6B80]'
             }`}
           >
             <CheckSquare className="w-5 h-5" />
-            <span>كود دعوة جديد</span>
+            <span>حساب الدخول</span>
           </button>
         </div>
       </nav>
     </div>
   );
 };
+

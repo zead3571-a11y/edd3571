@@ -12,6 +12,7 @@ import {
   FaceTemplateRecord,
   FileAssetRecord,
   Group,
+  Guardian,
   Invoice,
   MessageTemplate,
   OutboxMessage,
@@ -21,6 +22,7 @@ import {
   SettlementRecord,
   Student,
   StudentDeviceSession,
+  StudentGuardianLink,
   StudentPortalAccount,
   SystemUser,
   Teacher,
@@ -122,6 +124,8 @@ export interface CreateRepositoriesOptions {
 const ENTITY_TO_RESOURCE: Record<EntityKey, PermissionResource> = {
   centers: 'centers',
   users: 'users',
+  guardians: 'guardians',
+  studentGuardians: 'studentGuardians',
   students: 'students',
   teachers: 'teachers',
   groups: 'groups',
@@ -172,6 +176,17 @@ function buildPermissionContextForItem(
       ? (rec.groupIds as string[])
       : undefined;
     ctx.parentPhone = rec.parentPhone as string | undefined;
+    ctx.guardianIds = Array.isArray(rec.guardianIds)
+      ? (rec.guardianIds as string[])
+      : undefined;
+    ctx.guardianUserIds = Array.isArray(rec.guardianUserIds)
+      ? (rec.guardianUserIds as string[])
+      : undefined;
+  } else if (entityKey === 'guardians') {
+    ctx.guardianId = rec.id as string | undefined;
+  } else if (entityKey === 'studentGuardians') {
+    ctx.guardianId = rec.guardianId as string | undefined;
+    ctx.studentId = rec.studentId as string | undefined;
   } else if (entityKey === 'sessions' || entityKey === 'assessments') {
     const groupId = rec.groupId as string | undefined;
     ctx.groupId = groupId;
@@ -248,15 +263,16 @@ function filterItemsForActor<T>(
       return items.filter((t) => (t as unknown as Teacher).id === actor.teacherId);
     }
     if (entityKey === 'sessions') {
-      return items.filter((s) =>
-        teacherGroupIds.has((s as unknown as AttendanceSession).groupId)
-      );
+      return items.filter((s) => {
+        const sess = s as unknown as AttendanceSession;
+        return teacherGroupIds.has(sess.groupId) || sess.teacherId === actor.teacherId;
+      });
     }
     if (entityKey === 'attendanceRecords') {
       const teacherSessionIds = new Set(
         adapter
           .getCollection('sessions')
-          .filter((s) => teacherGroupIds.has(s.groupId))
+          .filter((s) => teacherGroupIds.has(s.groupId) || s.teacherId === actor.teacherId)
           .map((s) => s.id)
       );
       return items.filter((r) =>
@@ -282,19 +298,45 @@ function filterItemsForActor<T>(
 
   if (actor.role === UserRole.PARENT) {
     const cleanPhone = normalizePhoneDigits(actor.parentPhone);
-    const myChildren = cleanPhone
-      ? adapter
-          .getCollection('students')
-          .filter(
-            (st) =>
-              normalizePhoneDigits(st.parentPhone) === cleanPhone ||
-              normalizePhoneDigits(st.parent?.phone) === cleanPhone
-          )
-      : [];
+    const hasValidPhone = cleanPhone.length >= 8;
+    const links = adapter.getCollection('studentGuardians');
+    const linkedStudentIds = new Set(
+      links
+        .filter(
+          (l) =>
+            (actor.guardianId && l.guardianId === actor.guardianId) ||
+            (actor.userId && l.guardianUserId === actor.userId)
+        )
+        .map((l) => l.studentId)
+    );
+
+    const myChildren = adapter.getCollection('students').filter((st) => {
+      if (linkedStudentIds.has(st.id)) return true;
+      if (actor.guardianId && st.guardianIds?.includes(actor.guardianId)) return true;
+      if (actor.userId && st.guardianUserIds?.includes(actor.userId)) return true;
+      if (!hasValidPhone) return false;
+      const p1 = normalizePhoneDigits(st.parentPhone);
+      const p2 = normalizePhoneDigits(st.parent?.phone);
+      return (p1.length >= 8 && p1 === cleanPhone) || (p2.length >= 8 && p2 === cleanPhone);
+    });
     const childIds = new Set(myChildren.map((c) => c.id));
     const childGroupIds = new Set<string>();
     myChildren.forEach((c) => c.groupIds.forEach((gid) => childGroupIds.add(gid)));
 
+    if (entityKey === 'guardians') {
+      return items.filter(
+        (g) =>
+          (actor.guardianId && (g as unknown as Guardian).id === actor.guardianId) ||
+          (actor.userId && (g as unknown as Guardian).userId === actor.userId)
+      );
+    }
+    if (entityKey === 'studentGuardians') {
+      return items.filter(
+        (l) =>
+          (actor.guardianId && (l as unknown as StudentGuardianLink).guardianId === actor.guardianId) ||
+          (actor.userId && (l as unknown as StudentGuardianLink).guardianUserId === actor.userId)
+      );
+    }
     if (entityKey === 'students') {
       return items.filter((s) => childIds.has((s as unknown as Student).id));
     }
@@ -489,6 +531,8 @@ export interface EduflowRepositories {
   adapter: StorageAdapter;
   centers: Repository<Center>;
   users: Repository<SystemUser>;
+  guardians: Repository<Guardian>;
+  studentGuardians: Repository<StudentGuardianLink>;
   students: Repository<Student>;
   teachers: Repository<Teacher>;
   groups: Repository<Group>;
@@ -547,6 +591,20 @@ export function createRepositories(
       undefined,
       options
     ),
+    guardians: createEntityRepository<'guardians', Guardian>(
+      adapter,
+      'guardians',
+      'g',
+      undefined,
+      options
+    ),
+    studentGuardians: createEntityRepository<'studentGuardians', StudentGuardianLink>(
+      adapter,
+      'studentGuardians',
+      'sg',
+      undefined,
+      options
+    ),
     students: createEntityRepository<'students', Student>(
       adapter,
       'students',
@@ -585,7 +643,9 @@ export function createRepositories(
           t.compensation ||
           (t.compensationType === 'fixed_rent'
             ? { type: 'rent', rentAmount: t.compensationValue }
-            : { type: 'percent', centerPercent: Math.max(0, 100 - t.compensationValue) }),
+            : t.compensationType === 'per_session'
+              ? { type: 'per_session', perSessionAmount: t.compensationValue }
+              : { type: 'percent', centerPercent: Math.max(0, 100 - t.compensationValue) }),
       }),
       options
     ),

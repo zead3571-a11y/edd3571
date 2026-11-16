@@ -21,7 +21,8 @@ export const LandingScreen: React.FC = () => {
   const { navigate, centerSettings, students, sessions } = useEduflow();
 
   const activeStudentsCount = students.filter((s) => s.status === 'active').length;
-  const todaySessionsCount = sessions.filter((s) => s.date === '2026-11-12').length;
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const todaySessionsCount = sessions.filter((s) => s.date === todayIso).length;
 
   return (
     <div className="min-h-screen bg-[#F4F7FA] text-[#1E293B] flex flex-col">
@@ -173,7 +174,7 @@ export const LandingScreen: React.FC = () => {
                   <div className="p-3.5 flex items-center justify-between text-xs">
                     <div>
                       <p className="font-bold text-[#0F2A4A]">تصدير كشف الحضور والغياب</p>
-                      <p className="text-[#5B6B80] mt-0.5">كيمياء - ثالثة ثانوي · 2026-11-12</p>
+                      <p className="text-[#5B6B80] mt-0.5">متابعة حضور الحصص والمجموعات · {todayIso}</p>
                     </div>
                     <span className="font-bold text-[#0F766E]">PDF جاهز</span>
                   </div>

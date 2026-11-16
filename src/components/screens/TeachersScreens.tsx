@@ -136,10 +136,11 @@ export const TeachersListScreen: React.FC = () => {
     addOrUpdateTeacher(
       {
         name: name.trim(),
-        phone: phone.trim() || '01000000000',
+        phone: phone.trim(),
         subjects,
         compensationType: compType,
-        compensationValue: Number(compVal) || 70,
+        compensationValue:
+          Number(compVal) || (compType === 'per_session' ? 200 : compType === 'fixed_rent' ? 3500 : 70),
         rentMode: compType === 'fixed_rent' ? rentMode : undefined,
         hasLoginAccess: hasLogin,
       },
@@ -193,10 +194,12 @@ export const TeachersListScreen: React.FC = () => {
                       </div>
                     </div>
                     <StatusChip
-                      tone={tch.compensationType === 'percentage' ? 'success' : 'navy'}
+                      tone={tch.compensationType === 'fixed_rent' ? 'navy' : 'success'}
                       label={
                         tch.compensationType === 'percentage'
                           ? `نسبة ${tch.compensationValue}%`
+                          : tch.compensationType === 'per_session'
+                          ? `${formatEGP(tch.compensationValue)} / حصة`
                           : `إيجار ${formatEGP(tch.compensationValue)}`
                       }
                     />
@@ -280,12 +283,12 @@ export const TeachersListScreen: React.FC = () => {
             />
           </Field>
 
-          <Field label="رقم الموبايل" htmlFor="tch-phone" required>
+          <Field label="رقم الموبايل (اختياري)" htmlFor="tch-phone">
             <TextInput
               id="tch-phone"
               dir="ltr"
               className="text-right tabular-nums"
-              placeholder="01012345678"
+              placeholder="01xxxxxxxxx"
               value={phone}
               onChange={(e) => setPhone(e.target.value)}
             />
@@ -318,20 +321,34 @@ export const TeachersListScreen: React.FC = () => {
           </Field>
 
           <Field label="نظام التعاقد المالي" required>
-            <div className="grid grid-cols-2 gap-2 p-1 bg-slate-100 rounded-[8px]">
+            <div className="grid grid-cols-3 gap-1.5 p-1 bg-slate-100 rounded-[8px]">
+              <button
+                type="button"
+                onClick={() => {
+                  setCompType('per_session');
+                  setCompVal('200');
+                }}
+                className={`py-2 px-1 rounded-[6px] text-xs font-bold cursor-pointer ${
+                  compType === 'per_session'
+                    ? 'bg-white text-[#0F2A4A] shadow-xs'
+                    : 'text-[#5B6B80]'
+                }`}
+              >
+                بالحصة المكتملة (ج)
+              </button>
               <button
                 type="button"
                 onClick={() => {
                   setCompType('percentage');
                   setCompVal('70');
                 }}
-                className={`py-2 rounded-[6px] text-xs font-bold cursor-pointer ${
+                className={`py-2 px-1 rounded-[6px] text-xs font-bold cursor-pointer ${
                   compType === 'percentage'
                     ? 'bg-white text-[#0F2A4A] shadow-xs'
                     : 'text-[#5B6B80]'
                 }`}
               >
-                نسبة مئوية من التحصيل (%)
+                نسبة مئوية (%)
               </button>
               <button
                 type="button"
@@ -339,13 +356,13 @@ export const TeachersListScreen: React.FC = () => {
                   setCompType('fixed_rent');
                   setCompVal('3500');
                 }}
-                className={`py-2 rounded-[6px] text-xs font-bold cursor-pointer ${
+                className={`py-2 px-1 rounded-[6px] text-xs font-bold cursor-pointer ${
                   compType === 'fixed_rent'
                     ? 'bg-white text-[#0F2A4A] shadow-xs'
                     : 'text-[#5B6B80]'
                 }`}
               >
-                إيجار قاعة شهري ثابت (ج)
+                إيجار قاعة ثابت (ج)
               </button>
             </div>
           </Field>
@@ -365,7 +382,9 @@ export const TeachersListScreen: React.FC = () => {
 
           <Field
             label={
-              compType === 'percentage'
+              compType === 'per_session'
+                ? 'أجر المدرس لكل حصة مكتملة (ج)'
+                : compType === 'percentage'
                 ? 'نسبة المدرس (%) — الباقي حصة السنتر'
                 : rentMode === 'per_session'
                 ? 'إيجار القاعة للحصة الواحدة (ج)'
@@ -425,7 +444,7 @@ export const TeacherProfileScreen: React.FC = () => {
   const [tab, setTab] = useState<'groups' | 'revenue' | 'timetable'>('groups');
 
   // Phase 5: Teacher Settlement state
-  const [settleMonth, setSettleMonth] = useState('2026-11');
+  const [settleMonth, setSettleMonth] = useState(() => new Date().toISOString().slice(0, 7));
   const [basis, setBasis] = useState<'cash' | 'invoiced'>(
     centerSettings.settlementBasis || 'cash'
   );
@@ -531,7 +550,8 @@ export const TeacherProfileScreen: React.FC = () => {
             <div>
               <h2 className="text-xl font-bold text-[#0F2A4A]">{teacher.name}</h2>
               <p className="text-xs text-[#5B6B80] mt-1 tabular-nums">
-                {teacher.subjects.join(' · ')} · هاتف: {teacher.phone}
+                {teacher.subjects.join(' · ')}
+                {teacher.phone ? ` · هاتف: ${teacher.phone}` : ''}
               </p>
             </div>
           </div>
@@ -541,6 +561,8 @@ export const TeacherProfileScreen: React.FC = () => {
               label={
                 teacher.compensationType === 'percentage'
                   ? `نظام النسبة: ${teacher.compensationValue}% للمدرس`
+                  : teacher.compensationType === 'per_session'
+                  ? `بالحصة المكتملة: ${formatEGP(teacher.compensationValue)} / حصة`
                   : teacher.rentMode === 'per_session'
                   ? `إيجار قاعة: ${formatEGP(teacher.compensationValue)} / حصة`
                   : `إيجار شهري ثابت: ${formatEGP(teacher.compensationValue)}`

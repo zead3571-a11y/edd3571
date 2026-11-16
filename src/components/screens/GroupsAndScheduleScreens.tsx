@@ -82,7 +82,7 @@ export const GroupsListScreen: React.FC = () => {
         <TableSkeleton rows={5} />
       ) : listStateMode === 'error' ? (
         <ErrorState onRetry={() => setListStateMode('ready')} />
-      ) : listStateMode === 'empty' ? (
+      ) : listStateMode === 'empty' || groups.length === 0 ? (
         <EmptyState
           title="لا توجد مجموعات دراسية بعد"
           description="أنشئ مجموعات السنتر وحدد المدرس والقاعة والمواعيد الأسبوعية للبدء في تسجيل الطلاب."

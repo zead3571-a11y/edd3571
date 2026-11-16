@@ -121,7 +121,7 @@ export const SettingsScreen: React.FC = () => {
   const [cName, setCName] = useState(centerSettings.name);
   const [cPhone, setCPhone] = useState(centerSettings.phone);
   const [cAddress, setCAddress] = useState(centerSettings.address);
-  const [logoName, setLogoName] = useState('شعار_النخبة.svg');
+  const [logoName, setLogoName] = useState('شعار_السنتر.svg');
   const [siblingEnabled, setSiblingEnabled] = useState(
     centerSettings.discountPolicy?.siblingEnabled ?? true
   );
@@ -176,7 +176,7 @@ export const SettingsScreen: React.FC = () => {
   const [resetConfirmPhrase, setResetConfirmPhrase] = useState('');
 
   // Tab 6: Account
-  const [myName, setMyName] = useState(authSession?.name || 'أ. محمود عبد الرحمن');
+  const [myName, setMyName] = useState(authSession?.name || 'مسيو حامد البيلي');
   const [oldPass, setOldPass] = useState('');
   const [newPass, setNewPass] = useState('');
   const [accountError, setAccountError] = useState('');
@@ -447,7 +447,7 @@ export const SettingsScreen: React.FC = () => {
                     <tr key={u.id}>
                       <td className="py-3 px-4 font-bold text-[#1E293B]">{u.name}</td>
                       <td className="py-3 px-4 text-xs text-[#5B6B80] tabular-nums">
-                        {u.email} · {u.phone}
+                        {u.email}{u.phone ? ` · ${u.phone}` : ''}
                       </td>
                       <td className="py-3 px-4">
                         <StatusChip tone="navy" label={u.role} />
@@ -658,10 +658,10 @@ export const SettingsScreen: React.FC = () => {
             <h4 className="text-sm font-bold text-[#0F2A4A]">معاينة حية لرسالة ولي الأمر</h4>
             <div className="p-4 rounded-[12px] bg-white border border-[#E2E8F0] text-sm leading-relaxed text-[#1E293B] shadow-2xs">
               {interpolateTemplate(tplBody, {
-                اسم_الطالب: 'يوسف أحمد محمود',
-                التاريخ: '12/11/2026',
-                المجموعة: 'فيزياء - ثالثة ثانوي',
-                المبلغ: '480',
+                اسم_الطالب: 'محمود ميمي',
+                التاريخ: new Date().toLocaleDateString('en-GB'),
+                المجموعة: 'اللغة الفرنسية - ثالثة ثانوي',
+                المبلغ: '400',
                 الموعد: '4:00 م',
               })}
             </div>
@@ -693,7 +693,7 @@ export const SettingsScreen: React.FC = () => {
           <Field label="عبارة الترويسة أعلى الإيصال" htmlFor="rc-header">
             <TextInput
               id="rc-header"
-              placeholder="مثال: سنتر النخبة التعليمي — جودة ومتابعة مستمرة"
+              placeholder="مثال: سنتر حامد البيلي — جودة ومتابعة مستمرة"
               value={rcHeaderNote}
               onChange={(e) => setRcHeaderNote(e.target.value)}
             />
@@ -1267,7 +1267,7 @@ export const SettingsScreen: React.FC = () => {
                 inviteUser({
                   name: invName.trim(),
                   email: invEmail.trim(),
-                  phone: invPhone.trim() || '01000000000',
+                  phone: invPhone.trim(),
                   role: invRole,
                 });
                 setInvName('');
@@ -1475,10 +1475,16 @@ export const SubscriptionScreen: React.FC = () => {
     SUBSCRIPTION_PLANS.find((p) => p.id === centerSettings.currentPlanId) ||
     SUBSCRIPTION_PLANS[1];
 
-  const usedStudents = students.filter((s) => s.status === 'active').length + 310;
+  const usedStudents = students.filter((s) => s.status === 'active').length;
   const usedUsers = users.length;
   const studentPct = Math.min(100, Math.round((usedStudents / currentPlan.maxStudents) * 100));
   const userPct = Math.min(100, Math.round((usedUsers / currentPlan.maxUsers) * 100));
+
+  const nextRenewalDateLabel = (() => {
+    const now = new Date();
+    const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+    return nextMonth.toLocaleDateString('en-GB');
+  })();
 
   const targetUpgradePlan = SUBSCRIPTION_PLANS.find((p) => p.id === upgradePlanId);
 
@@ -1543,7 +1549,7 @@ export const SubscriptionScreen: React.FC = () => {
             <StatusChip tone="success" label="الباقة الحالية مفعّلة" />
             <h2 className="text-xl font-bold text-[#0F2A4A] mt-2">{currentPlan.name}</h2>
             <p className="text-xs text-[#5B6B80] tabular-nums">
-              قيمة الاشتراك الشهري: <strong>{formatEGP(currentPlan.monthlyPrice)}</strong> · موعد التجديد القادم: <strong>01 ديسمبر 2026</strong>
+              قيمة الاشتراك الشهري: <strong>{formatEGP(currentPlan.monthlyPrice)}</strong> · موعد التجديد القادم: <strong>{nextRenewalDateLabel}</strong>
             </p>
           </div>
 

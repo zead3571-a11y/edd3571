@@ -4,12 +4,15 @@ import {
   AssessmentGrade,
   CompensationType,
   DayOfWeek,
+  Expense,
   Group,
   GroupConflict,
   Invoice,
   PaymentRecord,
   PaymentStatus,
+  SettlementRecord,
   Student,
+  Teacher,
 } from '../types/eduflow';
 
 export const DAYS_ORDER: DayOfWeek[] = [
@@ -248,8 +251,16 @@ export function computeAttendanceStats(entries: AttendanceEntry[]): {
 export function calculateTeacherShare(
   collectedAmount: number,
   compensationType: CompensationType,
-  compensationValue: number
+  compensationValue: number,
+  completedSessionsCount = 0
 ): { teacherShare: number; centerShare: number } {
+  if (compensationType === 'per_session') {
+    const teacherShare = Math.max(0, Math.round(compensationValue * completedSessionsCount));
+    return {
+      teacherShare,
+      centerShare: Math.max(0, collectedAmount - teacherShare),
+    };
+  }
   if (compensationType === 'percentage') {
     const pct = Math.min(100, Math.max(0, compensationValue));
     const teacherShare = Math.round((collectedAmount * pct) / 100);
@@ -375,21 +386,13 @@ function formatShortArabicDate(isoDate: string): string {
   return `${parts[2]} ${monthLabel}`;
 }
 
-const DEFAULT_ATTENDANCE_BASELINE: AttendanceTrendPoint[] = [
-  { date: '2026-11-04', label: '04 نوف', present: 42, late: 4, absent: 5, attendanceRate: 90 },
-  { date: '2026-11-05', label: '05 نوف', present: 44, late: 3, absent: 4, attendanceRate: 92 },
-  { date: '2026-11-07', label: '07 نوف', present: 39, late: 5, absent: 7, attendanceRate: 86 },
-  { date: '2026-11-08', label: '08 نوف', present: 45, late: 2, absent: 4, attendanceRate: 92 },
-  { date: '2026-11-09', label: '09 نوف', present: 41, late: 4, absent: 6, attendanceRate: 88 },
-];
-
 export function buildAttendanceTrendSeries(
-  sessions: AttendanceSession[],
-  includeBaseline = true
+  sessions: AttendanceSession[]
 ): AttendanceTrendPoint[] {
   const byDate = new Map<string, { present: number; late: number; absent: number }>();
 
   for (const sess of sessions) {
+    if (sess.status === 'cancelled') continue;
     const stats = computeAttendanceStats(sess.entries);
     const recordedTotal = stats.present + stats.late + stats.absent;
     if (recordedTotal === 0) continue;
@@ -402,17 +405,11 @@ export function buildAttendanceTrendSeries(
     });
   }
 
-  const combined = new Map<string, AttendanceTrendPoint>();
-  if (includeBaseline) {
-    for (const base of DEFAULT_ATTENDANCE_BASELINE) {
-      combined.set(base.date, base);
-    }
-  }
-
+  const result: AttendanceTrendPoint[] = [];
   for (const [date, counts] of byDate.entries()) {
     const total = counts.present + counts.late + counts.absent;
     const rate = total > 0 ? Math.round(((counts.present + counts.late) / total) * 100) : 0;
-    combined.set(date, {
+    result.push({
       date,
       label: formatShortArabicDate(date),
       present: counts.present,
@@ -422,7 +419,7 @@ export function buildAttendanceTrendSeries(
     });
   }
 
-  return Array.from(combined.values()).sort((a, b) => a.date.localeCompare(b.date));
+  return result.sort((a, b) => a.date.localeCompare(b.date));
 }
 
 export interface RevenueDistributionSlice {
@@ -451,23 +448,43 @@ export function buildMonthlyRevenueDistribution(
 
   for (const grp of groups) {
     if (grp.status === 'paused') continue;
-    const activeEnrolled = students.filter(
-      (s) => s.status === 'active' && s.groupIds.includes(grp.id)
-    ).length;
-    // Combine actual payments/invoices with realistic baseline center volume per active group
     const groupPayments = payments
       .filter((p) => p.groupId === grp.id)
       .reduce((sum, p) => sum + p.amount, 0);
     const groupInvoiced = invoices
       .filter((inv) => inv.groupId === grp.id)
-      .reduce((sum, inv) => sum + inv.paid, 0);
+      .reduce((sum, inv) => sum + (typeof inv.netAmount === 'number' ? inv.netAmount : inv.total), 0);
+    const enrolledExpected =
+      students.filter((s) => s.status === 'active' && s.groupIds.includes(grp.id)).length *
+      grp.monthlyPrice;
 
-    const estimatedBase = Math.max(activeEnrolled, 1) * grp.monthlyPrice * 6;
-    const amount = estimatedBase + Math.max(groupPayments, groupInvoiced);
-    totalsBySubject.set(
-      grp.subject,
-      (totalsBySubject.get(grp.subject) || 0) + amount
+    const amount = groupPayments > 0 ? groupPayments : groupInvoiced > 0 ? groupInvoiced : enrolledExpected;
+    if (amount > 0) {
+      totalsBySubject.set(
+        grp.subject,
+        (totalsBySubject.get(grp.subject) || 0) + amount
+      );
+    }
+  }
+
+  // Include general / ungrouped student monthly invoices if no groups matched
+  const groupIds = new Set(groups.map((g) => g.id));
+  const generalInvoices = invoices.filter((inv) => !groupIds.has(inv.groupId));
+  if (generalInvoices.length > 0) {
+    const generalPaid = payments
+      .filter((p) => !groupIds.has(p.groupId))
+      .reduce((s, p) => s + p.amount, 0);
+    const generalInvoiced = generalInvoices.reduce(
+      (s, inv) => s + (typeof inv.netAmount === 'number' ? inv.netAmount : inv.total),
+      0
     );
+    const generalAmount = generalPaid > 0 ? generalPaid : generalInvoiced;
+    if (generalAmount > 0) {
+      totalsBySubject.set(
+        'رسوم شهرية عامة',
+        (totalsBySubject.get('رسوم شهرية عامة') || 0) + generalAmount
+      );
+    }
   }
 
   const entries = Array.from(totalsBySubject.entries())
@@ -484,3 +501,139 @@ export function buildMonthlyRevenueDistribution(
     color: SUBJECT_PALETTE[idx % SUBJECT_PALETTE.length],
   }));
 }
+
+export interface TeacherFinancialBreakdown {
+  teacherId: string;
+  teacherName: string;
+  compensationType: CompensationType;
+  ratePerSession: number;
+  completedSessionsCount: number;
+  accruedCompensation: number;
+  paidOut: number;
+  remainingCompensation: number;
+}
+
+export interface CenterFinancialOverview {
+  expectedStudentRevenue: number;
+  collectedRevenue: number;
+  outstandingReceivables: number;
+  completedSessionsCount: number;
+  teacherBreakdowns: TeacherFinancialBreakdown[];
+  totalTeacherCompensation: number;
+  totalTeacherPaidOut: number;
+  totalExpenses: number;
+  netCollectedOperatingResult: number;
+  estimatedOperatingResult: number;
+}
+
+export function computeCenterFinancialOverview(params: {
+  students: Student[];
+  teachers: Teacher[];
+  groups: Group[];
+  sessions: AttendanceSession[];
+  invoices: Invoice[];
+  payments: PaymentRecord[];
+  expenses: Expense[];
+  settlements: SettlementRecord[];
+}): CenterFinancialOverview {
+  const { students, teachers, groups, sessions, invoices, payments, expenses, settlements } = params;
+
+  const activeStudents = students.filter((s) => s.status === 'active');
+  const groupPriceMap = new Map(groups.map((g) => [g.id, g.monthlyPrice]));
+
+  const invoicedNetTotal = invoices.reduce(
+    (sum, inv) => sum + Math.max(0, typeof inv.netAmount === 'number' ? inv.netAmount : inv.total),
+    0
+  );
+  const invoicedStudentIds = new Set(invoices.map((i) => i.studentId));
+  const unbilledActiveStudentsExpected = activeStudents
+    .filter((s) => !invoicedStudentIds.has(s.id))
+    .reduce((sum, s) => {
+      if (s.groupIds.length > 0) {
+        const gSum = s.groupIds.reduce((gs, gid) => gs + (groupPriceMap.get(gid) || 0), 0);
+        return sum + gSum;
+      }
+      return sum + Math.max(0, s.monthlyFee ?? s.monthlyFeeOverride ?? 0);
+    }, 0);
+
+  const expectedStudentRevenue = invoicedNetTotal + unbilledActiveStudentsExpected;
+  const collectedRevenue = payments.reduce((sum, p) => sum + Math.max(0, p.amount), 0);
+  const openInvoicesRemaining = invoices.reduce(
+    (sum, inv) => sum + Math.max(0, (typeof inv.netAmount === 'number' ? inv.netAmount : inv.total) - inv.paid),
+    0
+  );
+  const outstandingReceivables = openInvoicesRemaining + unbilledActiveStudentsExpected;
+
+  // Deduplicated completed sessions (status === 'recorded' strictly; excludes cancelled/pending/upcoming)
+  const recordedSessionsMap = new Map<string, AttendanceSession>();
+  for (const sess of sessions) {
+    if (sess.status === 'recorded') {
+      recordedSessionsMap.set(sess.id, sess);
+    }
+  }
+  const recordedSessions = Array.from(recordedSessionsMap.values());
+  const completedSessionsCount = recordedSessions.length;
+
+  const teacherBreakdowns: TeacherFinancialBreakdown[] = teachers.map((t) => {
+    const tGroupIds = new Set(groups.filter((g) => g.teacherId === t.id).map((g) => g.id));
+    const tRecordedSessions = recordedSessions.filter(
+      (s) => s.teacherId === t.id || tGroupIds.has(s.groupId)
+    );
+    const tCompletedCount = tRecordedSessions.length;
+    const ratePerSession =
+      t.compensationType === 'per_session' || t.compensation?.type === 'per_session'
+        ? t.compensation?.perSessionAmount ?? t.compensationValue ?? 0
+        : 0;
+
+    let accruedCompensation = 0;
+    if (t.compensationType === 'per_session' || t.compensation?.type === 'per_session') {
+      accruedCompensation = tCompletedCount * ratePerSession;
+    } else {
+      const groupCollected = payments
+        .filter((p) => tGroupIds.has(p.groupId))
+        .reduce((sum, p) => sum + p.amount, 0);
+      accruedCompensation = calculateTeacherShare(
+        groupCollected,
+        t.compensationType,
+        t.compensationValue,
+        tCompletedCount
+      ).teacherShare;
+    }
+
+    const paidOut = settlements
+      .filter((s) => s.teacherId === t.id && s.status === 'settled')
+      .reduce((sum, s) => sum + Math.max(0, s.amountPaid), 0);
+
+    return {
+      teacherId: t.id,
+      teacherName: t.name,
+      compensationType: t.compensationType,
+      ratePerSession,
+      completedSessionsCount: tCompletedCount,
+      accruedCompensation,
+      paidOut,
+      remainingCompensation: Math.max(0, accruedCompensation - paidOut),
+    };
+  });
+
+  const totalTeacherCompensation = teacherBreakdowns.reduce(
+    (sum, b) => sum + b.accruedCompensation,
+    0
+  );
+  const totalTeacherPaidOut = teacherBreakdowns.reduce((sum, b) => sum + b.paidOut, 0);
+  const totalExpenses = expenses.reduce((sum, e) => sum + Math.max(0, e.amount), 0);
+
+  return {
+    expectedStudentRevenue,
+    collectedRevenue,
+    outstandingReceivables,
+    completedSessionsCount,
+    teacherBreakdowns,
+    totalTeacherCompensation,
+    totalTeacherPaidOut,
+    totalExpenses,
+    netCollectedOperatingResult: collectedRevenue - totalTeacherPaidOut - totalExpenses,
+    estimatedOperatingResult: expectedStudentRevenue - totalTeacherCompensation - totalExpenses,
+  };
+}
+

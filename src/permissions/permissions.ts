@@ -76,7 +76,9 @@ export type PermissionResource =
   | 'webhookEvents'
   | 'scheduledJobs'
   | 'fileAssets'
-  | 'designSystem';
+  | 'designSystem'
+  | 'guardians'
+  | 'studentGuardians';
 
 export interface PermissionActor {
   userId?: string;
@@ -84,6 +86,7 @@ export interface PermissionActor {
   centerId?: string;
   teacherId?: string;
   parentPhone?: string;
+  guardianId?: string;
   studentId?: string;
 }
 
@@ -94,10 +97,13 @@ export interface PermissionContext {
   studentId?: string;
   studentGroupIds?: string[];
   parentPhone?: string;
+  guardianId?: string;
+  guardianIds?: string[];
+  guardianUserIds?: string[];
   targetUserRole?: UserRole;
   settingTab?: string;
   groups?: Pick<Group, 'id' | 'teacherId'>[];
-  students?: Pick<Student, 'id' | 'groupIds' | 'parentPhone'>[];
+  students?: Pick<Student, 'id' | 'groupIds' | 'parentPhone' | 'guardianIds' | 'guardianUserIds'>[];
 }
 
 const ACTION_LABELS_AR: Record<PermissionAction, string> = {
@@ -160,6 +166,8 @@ const RESOURCE_LABELS_AR: Record<PermissionResource, string> = {
   scheduledJobs: 'مهام الجدولة والنظام',
   fileAssets: 'مرفقات الملفات والتخزين',
   designSystem: 'نظام التصميم',
+  guardians: 'أولياء الأمور',
+  studentGuardians: 'روابط الطلاب بأولياء الأمور',
 };
 
 export class PermissionError extends Error {
@@ -208,14 +216,33 @@ function isParentChildMatch(
   actor: PermissionActor,
   context?: PermissionContext
 ): boolean {
+  if (actor.guardianId || actor.userId) {
+    if (
+      (actor.guardianId && context?.guardianIds?.includes(actor.guardianId)) ||
+      (actor.userId && context?.guardianUserIds?.includes(actor.userId))
+    ) {
+      return true;
+    }
+    if (context?.studentId && context.students) {
+      const st = context.students.find((s) => s.id === context.studentId);
+      if (
+        st &&
+        ((actor.guardianId && st.guardianIds?.includes(actor.guardianId)) ||
+          (actor.userId && st.guardianUserIds?.includes(actor.userId)))
+      ) {
+        return true;
+      }
+    }
+  }
   const actorPhone = normalizePhoneDigits(actor.parentPhone);
-  if (!actorPhone) return false;
+  if (!actorPhone || actorPhone.length < 8) return false;
   if (context?.parentPhone) {
     return normalizePhoneDigits(context.parentPhone) === actorPhone;
   }
   if (context?.studentId && context.students) {
     const st = context.students.find((s) => s.id === context.studentId);
-    return Boolean(st && normalizePhoneDigits(st.parentPhone) === actorPhone);
+    const stPhone = normalizePhoneDigits(st?.parentPhone);
+    return Boolean(st && stPhone.length >= 8 && stPhone === actorPhone);
   }
   return false;
 }
@@ -298,6 +325,8 @@ export function can(
     if (
       resource === 'dashboard' ||
       resource === 'students' ||
+      resource === 'guardians' ||
+      resource === 'studentGuardians' ||
       resource === 'teachers' ||
       resource === 'groups' ||
       resource === 'schedule' ||
@@ -318,7 +347,7 @@ export function can(
   // print receipts, send WhatsApp messages.
   // Cannot edit/delete payments, expenses, discounts, settlements, settings, financial reports, or teacher shares.
   if (role === UserRole.RECEPTIONIST) {
-    if (resource === 'students') {
+    if (resource === 'students' || resource === 'guardians' || resource === 'studentGuardians') {
       return ['view', 'create', 'update', 'print'].includes(action);
     }
     if (resource === 'sessions' || resource === 'attendanceRecords') {
@@ -443,10 +472,24 @@ export function can(
     return false;
   }
 
-  // Parent: logs in with registered phone number; sees ONLY own children (attendance, assessments, invoices, receipts).
+  // Parent: logs in with email or phone; sees ONLY own children (guardianId, studentGuardians, or >=8 digit phone).
   if (role === UserRole.PARENT) {
     if (resource === 'parentPortal') {
       return action === 'view';
+    }
+    if (resource === 'guardians') {
+      if (action !== 'view') return false;
+      if (context?.guardianId && actor.guardianId) {
+        return context.guardianId === actor.guardianId;
+      }
+      return true;
+    }
+    if (resource === 'studentGuardians') {
+      if (action !== 'view') return false;
+      if (context?.guardianId && actor.guardianId) {
+        return context.guardianId === actor.guardianId;
+      }
+      return true;
     }
     if (
       resource === 'students' ||
@@ -458,7 +501,12 @@ export function can(
       resource === 'sessions'
     ) {
       if (action !== 'view' && action !== 'print') return false;
-      if (context?.parentPhone || (context?.studentId && context.students)) {
+      if (
+        context?.parentPhone ||
+        context?.guardianIds ||
+        context?.guardianUserIds ||
+        (context?.studentId && context.students)
+      ) {
         return isParentChildMatch(actor, context);
       }
       return true;
@@ -690,13 +738,15 @@ export function scopeCollectionsForActor(
 
   if (actor.role === UserRole.PARENT) {
     const cleanPhone = normalizePhoneDigits(actor.parentPhone);
-    const myChildren = cleanPhone
-      ? data.students.filter(
-          (st) =>
-            normalizePhoneDigits(st.parentPhone) === cleanPhone ||
-            normalizePhoneDigits(st.parent?.phone) === cleanPhone
-        )
-      : [];
+    const hasValidPhone = cleanPhone.length >= 8;
+    const myChildren = data.students.filter((st) => {
+      if (actor.guardianId && st.guardianIds?.includes(actor.guardianId)) return true;
+      if (actor.userId && st.guardianUserIds?.includes(actor.userId)) return true;
+      if (!hasValidPhone) return false;
+      const p1 = normalizePhoneDigits(st.parentPhone);
+      const p2 = normalizePhoneDigits(st.parent?.phone);
+      return (p1.length >= 8 && p1 === cleanPhone) || (p2.length >= 8 && p2 === cleanPhone);
+    });
     const childIds = new Set(myChildren.map((c) => c.id));
     const childGroupIds = new Set<string>();
     myChildren.forEach((c) => c.groupIds.forEach((gid) => childGroupIds.add(gid)));

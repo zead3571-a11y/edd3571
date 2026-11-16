@@ -17,66 +17,70 @@
 ```sql
 -- 1) Centers
 CREATE TABLE centers (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
   governorate TEXT NOT NULL,
   city TEXT NOT NULL,
-  address TEXT,
-  phone TEXT NOT NULL,
+  address TEXT DEFAULT '',
+  phone TEXT DEFAULT '',
   stages TEXT[] NOT NULL DEFAULT '{}',
   current_plan_id TEXT NOT NULL DEFAULT 'pro',
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- 2) Users (Staff, Teachers & Parent Portal Accounts)
+-- 2) Users (Staff, Teachers, Students & Parent Portal Accounts)
 CREATE TABLE users (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  id TEXT PRIMARY KEY,
   auth_uid UUID UNIQUE,
-  center_id UUID NOT NULL REFERENCES centers(id) ON DELETE CASCADE,
+  center_id TEXT NOT NULL REFERENCES centers(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
   email TEXT NOT NULL,
-  phone TEXT NOT NULL,
-  role TEXT NOT NULL CHECK (role IN ('مالك', 'مدير', 'محاسب', 'ريسبشن', 'مدرس', 'ولي أمر')),
+  phone TEXT DEFAULT '',
+  role TEXT NOT NULL CHECK (role IN ('مالك', 'مدير', 'محاسب', 'ريسبشن', 'مدرس', 'ولي أمر', 'طالب')),
   status TEXT NOT NULL CHECK (status IN ('active', 'invited')) DEFAULT 'active',
-  teacher_id UUID NULL,
+  teacher_id TEXT NULL,
+  student_id TEXT NULL,
+  guardian_id TEXT NULL,
   invitation_code TEXT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE (center_id, email),
-  UNIQUE (center_id, phone)
+  UNIQUE (center_id, email)
 );
 
 -- 3) Rooms
 CREATE TABLE rooms (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  center_id UUID NOT NULL REFERENCES centers(id) ON DELETE CASCADE,
+  id TEXT PRIMARY KEY,
+  center_id TEXT NOT NULL REFERENCES centers(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
   capacity INT NOT NULL DEFAULT 40
 );
 
--- 4) Teachers
+-- 4) Teachers (supports percentage, fixed_rent, and per_session e.g. 200 EGP/completed session)
 CREATE TABLE teachers (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  center_id UUID NOT NULL REFERENCES centers(id) ON DELETE CASCADE,
+  id TEXT PRIMARY KEY,
+  center_id TEXT NOT NULL REFERENCES centers(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
-  phone TEXT NOT NULL,
+  phone TEXT DEFAULT '',
   subjects TEXT[] NOT NULL DEFAULT '{}',
-  compensation_type TEXT NOT NULL CHECK (compensation_type IN ('percent', 'rent')),
+  compensation_type TEXT NOT NULL CHECK (compensation_type IN ('percent', 'rent', 'per_session')),
   center_percent NUMERIC(5,2),
   rent_amount NUMERIC(10,2),
+  per_session_amount NUMERIC(10,2),
   has_login_access BOOLEAN NOT NULL DEFAULT false,
   color TEXT NOT NULL DEFAULT '#0F766E'
 );
 
--- 5) Students (unique student code S-000123 per center)
+-- 5) Students & Guardians (unique student code S-000123 per center)
 CREATE TABLE students (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  center_id UUID NOT NULL REFERENCES centers(id) ON DELETE CASCADE,
+  id TEXT PRIMARY KEY,
+  center_id TEXT NOT NULL REFERENCES centers(id) ON DELETE CASCADE,
+  user_id TEXT NULL,
   code TEXT NOT NULL,
   full_name TEXT NOT NULL,
   stage TEXT NOT NULL,
-  phone TEXT,
+  phone TEXT DEFAULT '',
   parent_name TEXT NOT NULL,
-  parent_phone TEXT NOT NULL,
+  parent_phone TEXT DEFAULT '',
+  monthly_fee NUMERIC(10,2) NOT NULL DEFAULT 400,
   standing_discount NUMERIC(10,2) NOT NULL DEFAULT 0,
   monthly_fee_override NUMERIC(10,2),
   status TEXT NOT NULL CHECK (status IN ('active', 'inactive')) DEFAULT 'active',
@@ -84,18 +88,38 @@ CREATE TABLE students (
   UNIQUE (center_id, code)
 );
 
+CREATE TABLE guardians (
+  id TEXT PRIMARY KEY,
+  center_id TEXT NOT NULL REFERENCES centers(id) ON DELETE CASCADE,
+  user_id TEXT NULL,
+  name TEXT NOT NULL,
+  email TEXT NULL,
+  phone TEXT DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE student_guardians (
+  id TEXT PRIMARY KEY,
+  center_id TEXT NOT NULL REFERENCES centers(id) ON DELETE CASCADE,
+  student_id TEXT NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+  guardian_id TEXT NOT NULL REFERENCES guardians(id) ON DELETE CASCADE,
+  guardian_user_id TEXT NULL,
+  relationship TEXT NOT NULL DEFAULT 'ولي أمر',
+  UNIQUE (student_id, guardian_id)
+);
+
 -- 6) Groups & Enrollments
 CREATE TABLE groups (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  center_id UUID NOT NULL REFERENCES centers(id) ON DELETE CASCADE,
+  id TEXT PRIMARY KEY,
+  center_id TEXT NOT NULL REFERENCES centers(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
   subject TEXT NOT NULL,
-  teacher_id UUID NOT NULL REFERENCES teachers(id),
+  teacher_id TEXT NOT NULL REFERENCES teachers(id),
   stage TEXT NOT NULL,
   days TEXT[] NOT NULL,
   start_time TIME NOT NULL,
   end_time TIME NOT NULL,
-  room_id UUID REFERENCES rooms(id),
+  room_id TEXT REFERENCES rooms(id),
   room_name TEXT NOT NULL,
   capacity INT NOT NULL,
   monthly_price NUMERIC(10,2) NOT NULL,
@@ -104,60 +128,61 @@ CREATE TABLE groups (
 );
 
 CREATE TABLE group_enrollments (
-  center_id UUID NOT NULL REFERENCES centers(id) ON DELETE CASCADE,
-  group_id UUID NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
-  student_id UUID NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+  center_id TEXT NOT NULL REFERENCES centers(id) ON DELETE CASCADE,
+  group_id TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+  student_id TEXT NOT NULL REFERENCES students(id) ON DELETE CASCADE,
   PRIMARY KEY (group_id, student_id)
 );
 
 -- 7) Sessions & Attendance Records
 CREATE TABLE sessions (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  center_id UUID NOT NULL REFERENCES centers(id) ON DELETE CASCADE,
-  group_id UUID NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+  id TEXT PRIMARY KEY,
+  center_id TEXT NOT NULL REFERENCES centers(id) ON DELETE CASCADE,
+  group_id TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+  teacher_id TEXT NULL REFERENCES teachers(id),
   date DATE NOT NULL,
   type TEXT NOT NULL CHECK (type IN ('regular', 'makeup')) DEFAULT 'regular',
-  original_session_id UUID REFERENCES sessions(id),
+  original_session_id TEXT REFERENCES sessions(id),
   time_label TEXT NOT NULL,
-  room_id UUID REFERENCES rooms(id),
-  status TEXT NOT NULL CHECK (status IN ('recorded', 'pending', 'upcoming')) DEFAULT 'upcoming'
+  room_id TEXT REFERENCES rooms(id),
+  status TEXT NOT NULL CHECK (status IN ('recorded', 'pending', 'upcoming', 'cancelled')) DEFAULT 'upcoming'
 );
 
 CREATE TABLE attendance_records (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  center_id UUID NOT NULL REFERENCES centers(id) ON DELETE CASCADE,
-  session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-  student_id UUID NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+  id TEXT PRIMARY KEY,
+  center_id TEXT NOT NULL REFERENCES centers(id) ON DELETE CASCADE,
+  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  student_id TEXT NOT NULL REFERENCES students(id) ON DELETE CASCADE,
   status TEXT NOT NULL CHECK (status IN ('present', 'late', 'absent', 'unrecorded')),
   method TEXT NOT NULL CHECK (method IN ('manual', 'qr', 'face')) DEFAULT 'manual',
   confidence NUMERIC(5,4),
-  marked_by UUID REFERENCES users(id),
+  marked_by TEXT REFERENCES users(id),
   marked_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   note TEXT,
-  compensated_by UUID REFERENCES sessions(id),
+  compensated_by TEXT REFERENCES sessions(id),
   UNIQUE (session_id, student_id)
 );
 
 -- 8) Invoices, Discounts, Payments, Expenses, Settlements
 CREATE TABLE discounts (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  center_id UUID NOT NULL REFERENCES centers(id) ON DELETE CASCADE,
-  student_id UUID NOT NULL REFERENCES students(id) ON DELETE CASCADE,
-  invoice_id UUID NULL,
+  id TEXT PRIMARY KEY,
+  center_id TEXT NOT NULL REFERENCES centers(id) ON DELETE CASCADE,
+  student_id TEXT NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+  invoice_id TEXT NULL,
   title TEXT NOT NULL,
   type TEXT NOT NULL CHECK (type IN ('fixed', 'percent')),
   value NUMERIC(10,2) NOT NULL,
   amount NUMERIC(10,2) NOT NULL,
-  created_by UUID REFERENCES users(id),
+  created_by TEXT REFERENCES users(id),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE invoices (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  center_id UUID NOT NULL REFERENCES centers(id) ON DELETE CASCADE,
+  id TEXT PRIMARY KEY,
+  center_id TEXT NOT NULL REFERENCES centers(id) ON DELETE CASCADE,
   number TEXT NOT NULL,
-  student_id UUID NOT NULL REFERENCES students(id) ON DELETE CASCADE,
-  group_id UUID NOT NULL REFERENCES groups(id),
+  student_id TEXT NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+  group_id TEXT NULL,
   month TEXT NOT NULL, -- YYYY-MM
   base_amount NUMERIC(10,2) NOT NULL,
   discount_lines JSONB NOT NULL DEFAULT '[]',
@@ -170,17 +195,17 @@ CREATE TABLE invoices (
 );
 
 CREATE TABLE payments (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  center_id UUID NOT NULL REFERENCES centers(id) ON DELETE CASCADE,
+  id TEXT PRIMARY KEY,
+  center_id TEXT NOT NULL REFERENCES centers(id) ON DELETE CASCADE,
   receipt_number TEXT NOT NULL,
-  invoice_id UUID NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
-  student_id UUID NOT NULL REFERENCES students(id),
-  group_id UUID NOT NULL REFERENCES groups(id),
+  invoice_id TEXT NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
+  student_id TEXT NOT NULL REFERENCES students(id),
+  group_id TEXT NULL,
   amount NUMERIC(10,2) NOT NULL CHECK (amount > 0),
   remaining_after NUMERIC(10,2) NOT NULL,
   method TEXT NOT NULL,
   date DATE NOT NULL,
-  recorded_by UUID REFERENCES users(id),
+  recorded_by TEXT REFERENCES users(id),
   note TEXT,
   UNIQUE (center_id, receipt_number)
 );

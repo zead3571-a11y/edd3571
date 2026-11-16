@@ -515,13 +515,13 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
                 className="h-10 pl-3 pr-1.5 rounded-[8px] border border-[#E2E8F0] bg-white hover:bg-slate-50 flex items-center gap-2 cursor-pointer"
               >
                 <InitialAvatar
-                  name={authSession?.name || 'محمود عبد الرحمن'}
+                  name={authSession?.name || 'مستخدم النظام'}
                   size="sm"
                   tint="#0F2A4A"
                 />
                 <div className="hidden sm:block text-right leading-tight">
                   <span className="text-xs font-bold text-[#1E293B] block max-w-[120px] truncate">
-                    {authSession?.name || 'أ. محمود'}
+                    {authSession?.name || 'مستخدم النظام'}
                   </span>
                   <span className="text-[10px] text-[#5B6B80] block">{currentRole}</span>
                 </div>
@@ -531,7 +531,7 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
                 <div className="absolute left-0 mt-2 w-64 bg-white border border-[#E2E8F0] rounded-[12px] shadow-xl z-50 overflow-hidden py-1.5">
                   <div className="px-3.5 py-2 border-b border-[#E2E8F0]">
                     <p className="text-xs font-bold text-[#0F2A4A] truncate">
-                      {authSession?.name || 'أ. محمود عبد الرحمن'}
+                      {authSession?.name || 'مستخدم النظام'}
                     </p>
                     <p className="text-[11px] text-[#5B6B80]">
                       الصلاحية الحالية: {currentRole}

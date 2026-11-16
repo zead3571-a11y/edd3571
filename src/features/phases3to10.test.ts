@@ -6,6 +6,7 @@ import {
   getActivePermissionActor,
   setActivePermissionActor,
 } from '../data/repositories';
+import { DEFAULT_CENTER_ID } from '../data/seedData';
 import { PermissionError } from '../permissions/permissions';
 import { UserRole } from '../types/eduflow';
 import {
@@ -61,7 +62,7 @@ test('Phase 3: CSV export neutralizes spreadsheet formula injection and includes
   const csv = buildStudentsCsv(repos.students.list(), repos.groups.list());
   assert.ok(csv.startsWith('\uFEFF'), 'CSV should start with UTF-8 BOM');
   assert.ok(csv.includes('كود الطالب'));
-  assert.ok(csv.includes('S-000'));
+  assert.ok(csv.includes('S-000101'));
 
   const invCsv = buildInvoicesCsv(
     repos.invoices.list(),
@@ -86,32 +87,60 @@ test('Phase 3: CSV export neutralizes spreadsheet formula injection and includes
 test('Phase 4: Bulk invoice preview applies sibling & scholarship discounts idempotently', () => {
   const adapter = new LocalStorageAdapter({ storage: new MemStorage(), debounceMs: 0 });
   const repos = createRepositories(adapter);
+
+  const testGroup = repos.groups.create({
+    centerId: DEFAULT_CENTER_ID,
+    name: 'فرنساوي - ثالثة ثانوي',
+    subject: 'لغة فرنسية',
+    teacherId: 't-mohamed',
+    stage: 'الصف الثالث الثانوي',
+    days: ['السبت', 'الثلاثاء'],
+    startTime: '16:00',
+    endTime: '18:00',
+    room: 'قاعة 1',
+    roomId: 'r1',
+    capacity: 30,
+    monthlyPrice: 400,
+    startDate: '2026-11-16',
+    status: 'active',
+  });
+  const thirdStudent = repos.students.create({
+    centerId: DEFAULT_CENTER_ID,
+    code: '',
+    fullName: 'طالب منحة تفوق',
+    name: 'طالب منحة تفوق',
+    stage: 'الصف الثالث الثانوي',
+    parent: { name: 'ولي أمر ثالث', phone: '01099887766' },
+    parentName: 'ولي أمر ثالث',
+    parentPhone: '01099887766',
+    groupIds: [testGroup.id],
+    status: 'active',
+    paymentStatus: 'pending',
+    lastAttendance: 'لم يحضر بعد',
+    attendanceRate: 100,
+    notes: [],
+    standingDiscountConfig: {
+      type: 'scholarship',
+      value: 100,
+      reason: 'منحة تفوق 100%',
+    },
+    createdAt: new Date().toISOString(),
+  });
+
   const students = repos.students.list();
   const groups = repos.groups.list();
   const existingInvoices = repos.invoices.list();
   const settings = repos.meta.getCenterSettings();
 
-  // Give 2nd student the same parent phone as 1st student to test sibling detection,
-  // and give 3rd student a 100% standing scholarship.
-  const firstPhone = students[0].parentPhone;
+  // Give 1st & 2nd students matching parentPhone to test sibling detection
+  const sharedSiblingPhone = '01001112233';
   const testStudents = students.map((s, idx) => {
-    if (idx === 1) {
+    if (idx === 0 || idx === 1) {
       return {
         ...s,
-        parentPhone: firstPhone,
-        parent: { ...s.parent, phone: firstPhone },
-        groupIds: [groups[0].id],
-      };
-    }
-    if (idx === 2) {
-      return {
-        ...s,
-        groupIds: [groups[0].id],
-        standingDiscountConfig: {
-          type: 'scholarship' as const,
-          value: 100,
-          reason: 'منحة تفوق 100%',
-        },
+        parentPhone: sharedSiblingPhone,
+        parent: { ...s.parent, phone: sharedSiblingPhone },
+        groupIds: [testGroup.id],
       };
     }
     return s;
@@ -131,13 +160,13 @@ test('Phase 4: Bulk invoice preview applies sibling & scholarship discounts idem
     },
   });
 
-  assert.ok(preview1.itemsToCreate.length > 0);
-  const sibItem = preview1.itemsToCreate.find((i) => i.student.id === testStudents[1].id);
-  assert.ok(sibItem);
+  assert.equal(preview1.itemsToCreate.length, 3);
+  const sibItem = preview1.itemsToCreate.find((i) => i.siblingRank === 2);
+  assert.ok(sibItem, 'One of the two siblings should receive rank 2 discount');
   assert.equal(sibItem.siblingRank, 2);
   assert.ok(sibItem.discountTotal > 0, 'Second sibling should receive discount');
 
-  const freeItem = preview1.itemsToCreate.find((i) => i.student.id === testStudents[2].id);
+  const freeItem = preview1.itemsToCreate.find((i) => i.student.id === thirdStudent.id);
   assert.ok(freeItem);
   assert.equal(freeItem.netAmount, 0);
   assert.equal(freeItem.isScholarshipFree, true);
@@ -179,39 +208,101 @@ test('Phase 4: Bulk invoice preview applies sibling & scholarship discounts idem
   assert.ok(settings);
 });
 
-test('Phase 5: Teacher settlement calculates percent/rent, manual lines, and negative carry-forward', () => {
+test('Phase 5: Teacher settlement handles per_session (200 EGP/completed session), percent, and carry-forward', () => {
   const adapter = new LocalStorageAdapter({ storage: new MemStorage(), debounceMs: 0 });
   const repos = createRepositories(adapter);
-  const teachers = repos.teachers.list();
-  const groups = repos.groups.list();
-  const invoices = repos.invoices.list();
-  const payments = repos.payments.list();
-  const sessions = repos.sessions.list();
 
-  const pctTeacher = teachers.find((t) => t.compensationType === 'percentage')!;
-  const calc1 = calculateTeacherSettlement({
-    teacher: pctTeacher,
-    groups,
-    invoices,
-    payments,
-    sessions,
+  const mohamed = repos.teachers.get('t-mohamed')!;
+  const group = repos.groups.create({
+    centerId: DEFAULT_CENTER_ID,
+    name: 'مجموعة لغة فرنسية',
+    subject: 'لغة فرنسية',
+    teacherId: mohamed.id,
+    stage: 'الصف الثالث الثانوي',
+    days: ['السبت'],
+    startTime: '16:00',
+    endTime: '18:00',
+    room: 'قاعة 1',
+    roomId: 'r1',
+    capacity: 25,
+    monthlyPrice: 400,
+    startDate: '2026-11-16',
+    status: 'active',
+  });
+
+  // 2 recorded sessions + 1 cancelled + 1 pending => strictly 2 * 200 = 400 EGP
+  const s1 = repos.sessions.create({
+    centerId: DEFAULT_CENTER_ID,
+    groupId: group.id,
+    teacherId: mohamed.id,
+    date: '2026-11-10',
+    timeLabel: '16:00',
+    roomId: 'r1',
+    type: 'regular',
+    status: 'recorded',
+    entries: [],
+  });
+  const s2 = repos.sessions.create({
+    centerId: DEFAULT_CENTER_ID,
+    groupId: group.id,
+    teacherId: mohamed.id,
+    date: '2026-11-14',
+    timeLabel: '16:00',
+    roomId: 'r1',
+    type: 'regular',
+    status: 'recorded',
+    entries: [],
+  });
+  const sCancelled = repos.sessions.create({
+    centerId: DEFAULT_CENTER_ID,
+    groupId: group.id,
+    teacherId: mohamed.id,
+    date: '2026-11-15',
+    timeLabel: '16:00',
+    roomId: 'r1',
+    type: 'regular',
+    status: 'cancelled',
+    entries: [],
+  });
+  assert.ok(s1 && s2 && sCancelled);
+
+  const perSessionCalc = calculateTeacherSettlement({
+    teacher: mohamed,
+    groups: repos.groups.list(),
+    invoices: repos.invoices.list(),
+    payments: repos.payments.list(),
+    sessions: repos.sessions.list(),
     settlements: [],
     monthInput: '2026-11',
     basis: 'cash',
-    manualLines: [{ id: 'ml-1', type: 'bonus', amount: 200, reason: 'حافز التزام' }],
+    manualLines: [{ id: 'ml-1', type: 'bonus', amount: 100, reason: 'حافز التزام' }],
     applyCarryForward: true,
   });
 
-  assert.equal(calc1.bonusesTotal, 200);
-  assert.equal(calc1.netPayable, Math.max(0, calc1.teacherGross + 200));
+  assert.equal(perSessionCalc.sessionsHeldTotal, 2);
+  assert.equal(perSessionCalc.teacherGross, 400);
+  assert.equal(perSessionCalc.bonusesTotal, 100);
+  assert.equal(perSessionCalc.netPayable, 500);
 
-  // Negative balance carry-forward check
+  // Percentage teacher & negative carry-forward check
+  const pctTeacher = repos.teachers.create({
+    centerId: DEFAULT_CENTER_ID,
+    name: 'مدرس نسبة تجريبي',
+    phone: '',
+    subjects: ['لغة فرنسية'],
+    compensationType: 'percentage',
+    compensationValue: 70,
+    compensation: { type: 'percent', centerPercent: 30 },
+    hasLoginAccess: false,
+    color: '#0F766E',
+  });
+
   const calcNegative = calculateTeacherSettlement({
     teacher: pctTeacher,
-    groups,
-    invoices,
-    payments,
-    sessions,
+    groups: repos.groups.list(),
+    invoices: repos.invoices.list(),
+    payments: repos.payments.list(),
+    sessions: repos.sessions.list(),
     settlements: [],
     monthInput: '2026-11',
     basis: 'cash',
@@ -227,16 +318,53 @@ test('Phase 8: WhatsApp formatting normalizes Egyptian phone numbers and builds 
   assert.equal(toWhatsAppPhone('01002349871'), '201002349871');
   assert.equal(toWhatsAppPhone('+201002349871'), '201002349871');
 
-  const url = buildWhatsAppUrl('01002349871', 'مرحباً بكم في سنتر النخبة');
+  const url = buildWhatsAppUrl('01002349871', 'مرحباً بكم في سنتر حامد البيلي');
   assert.ok(url.startsWith('https://wa.me/201002349871?text='));
 
   const adapter = new LocalStorageAdapter({ storage: new MemStorage(), debounceMs: 0 });
   const repos = createRepositories(adapter);
   const student = repos.students.list()[0];
-  const group = repos.groups.list()[0];
-  const session = repos.sessions.list()[0];
   const invoice = repos.invoices.list()[0];
-  const payment = repos.payments.list()[0];
+
+  const group = repos.groups.create({
+    centerId: DEFAULT_CENTER_ID,
+    name: 'مجموعة 3ث',
+    subject: 'لغة فرنسية',
+    teacherId: 't-mohamed',
+    stage: 'الصف الثالث الثانوي',
+    days: ['السبت'],
+    startTime: '16:00',
+    endTime: '18:00',
+    room: 'قاعة 1',
+    roomId: 'r1',
+    capacity: 30,
+    monthlyPrice: 400,
+    startDate: '2026-11-16',
+    status: 'active',
+  });
+  const session = repos.sessions.create({
+    centerId: DEFAULT_CENTER_ID,
+    groupId: group.id,
+    teacherId: 't-mohamed',
+    date: '2026-11-16',
+    timeLabel: '16:00',
+    roomId: 'r1',
+    type: 'regular',
+    status: 'recorded',
+    entries: [{ studentId: student.id, status: 'absent' }],
+  });
+  const payment = repos.payments.create({
+    centerId: DEFAULT_CENTER_ID,
+    receiptNumber: 'RCP-202611-001',
+    invoiceId: invoice.id,
+    studentId: student.id,
+    groupId: group.id,
+    amount: 400,
+    remainingAfter: 0,
+    method: 'نقدي',
+    date: '2026-11-16',
+    recordedBy: 'مسيو حامد البيلي',
+  });
 
   const absMsg = buildAbsenceMessage('تغيب {اسم_الطالب} عن {المجموعة} بتاريخ {التاريخ}', {
     student,
@@ -253,7 +381,7 @@ test('Phase 8: WhatsApp formatting normalizes Egyptian phone numbers and builds 
   assert.ok(lateMsg.includes(student.name));
 
   const recMsg = buildReceiptMessage({
-    centerName: 'سنتر النخبة',
+    centerName: 'سنتر حامد البيلي',
     student,
     group,
     payment,
@@ -282,7 +410,7 @@ test('Phase 9: QR encoding/parsing & image data URL generation work deterministi
 
 test('Phase 10: Biometric face matching enforces parent consent and owner-only settings toggle', async () => {
   const adapter = new LocalStorageAdapter({ storage: new MemStorage(), debounceMs: 0 });
-  setActivePermissionActor({ userId: 'owner-1', role: UserRole.OWNER, centerId: 'center-1' });
+  setActivePermissionActor({ userId: 'u-hamed', role: UserRole.OWNER, centerId: DEFAULT_CENTER_ID });
   const repos = createRepositories(adapter, {
     getActor: getActivePermissionActor,
     enforcePermissions: true,
@@ -298,7 +426,7 @@ test('Phase 10: Biometric face matching enforces parent consent and owner-only s
     faceTemplates: [
       {
         id: 'ft-1',
-        centerId: 'center-1',
+        centerId: DEFAULT_CENTER_ID,
         studentId: student.id,
         descriptorHash: hash,
         enrolledAt: new Date().toISOString(),
@@ -316,19 +444,19 @@ test('Phase 10: Biometric face matching enforces parent consent and owner-only s
     consents: [
       {
         id: 'c-1',
-        centerId: 'center-1',
+        centerId: DEFAULT_CENTER_ID,
         studentId: student.id,
         parentPhone: student.parentPhone,
         type: 'biometric_face',
         granted: true,
         grantedAt: new Date().toISOString(),
-        capturedBy: 'owner',
+        capturedBy: 'u-hamed',
       },
     ],
     faceTemplates: [
       {
         id: 'ft-1',
-        centerId: 'center-1',
+        centerId: DEFAULT_CENTER_ID,
         studentId: student.id,
         descriptorHash: hash,
         enrolledAt: new Date().toISOString(),
@@ -344,9 +472,9 @@ test('Phase 10: Biometric face matching enforces parent consent and owner-only s
   // Repository guard: Admin cannot flip biometricFaceEnabled, Owner can
   const prevSettings = repos.meta.getCenterSettings();
   setActivePermissionActor({
-    userId: 'admin-1',
+    userId: 'u-salma',
     role: UserRole.ADMIN,
-    centerId: 'center-1',
+    centerId: DEFAULT_CENTER_ID,
   });
   assert.throws(
     () =>
@@ -358,9 +486,9 @@ test('Phase 10: Biometric face matching enforces parent consent and owner-only s
   );
 
   setActivePermissionActor({
-    userId: 'owner-1',
+    userId: 'u-hamed',
     role: UserRole.OWNER,
-    centerId: 'center-1',
+    centerId: DEFAULT_CENTER_ID,
   });
   repos.meta.setCenterSettings({
     ...prevSettings,

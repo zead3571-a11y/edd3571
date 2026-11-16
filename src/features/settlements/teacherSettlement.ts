@@ -66,6 +66,7 @@ export function calculateTeacherSettlement(params: {
   const monthKey = normalizeMonthKey(monthInput);
   const monthLabel = formatMonthArabic(monthKey);
   const teacherGroups = groups.filter((g) => g.teacherId === teacher.id);
+  const teacherGroupIdSet = new Set(teacherGroups.map((g) => g.id));
 
   const groupBreakdowns: TeacherGroupBreakdown[] = teacherGroups.map((grp) => {
     const grpSessionsHeld = sessions.filter(
@@ -96,30 +97,51 @@ export function calculateTeacherSettlement(params: {
     };
   });
 
+  // Deduplicated completed teaching sessions for this teacher in the target month (status === 'recorded' only)
+  const completedSessionIds = new Set<string>();
+  sessions.forEach((s) => {
+    if (s.status !== 'recorded') return;
+    if (!s.date.startsWith(monthKey)) return;
+    if (s.teacherId === teacher.id || teacherGroupIdSet.has(s.groupId)) {
+      completedSessionIds.add(s.id);
+    }
+  });
+
   const totalCollected = groupBreakdowns.reduce((sum, b) => sum + b.collected, 0);
-  const sessionsHeldTotal = groupBreakdowns.reduce((sum, b) => sum + b.sessionsHeld, 0);
+  const sessionsHeldTotal = completedSessionIds.size;
+
+  const isPerSession =
+    teacher.compensation?.type === 'per_session' || teacher.compensationType === 'per_session';
 
   let centerDeduction = 0;
   let centerDeductionLabel = '';
-  if (teacher.compensation?.type === 'rent' || teacher.compensationType === 'fixed_rent') {
+  let teacherGross = 0;
+
+  if (isPerSession) {
+    const perSessionAmount =
+      teacher.compensation?.perSessionAmount ?? teacher.compensationValue ?? 0;
+    teacherGross = perSessionAmount * sessionsHeldTotal;
+    centerDeduction = Math.max(0, totalCollected - teacherGross);
+    centerDeductionLabel = `أجر بالحصة (${perSessionAmount} ج × ${sessionsHeldTotal} حصة مكتملة)`;
+  } else if (teacher.compensation?.type === 'rent' || teacher.compensationType === 'fixed_rent') {
     const rentUnit = teacher.compensation?.rentAmount ?? teacher.compensationValue;
     const rentMode = teacher.rentMode || teacher.compensation?.rentMode || 'monthly';
     if (rentMode === 'per_session') {
-      const effectiveSessions = Math.max(1, sessionsHeldTotal);
+      const effectiveSessions = sessionsHeldTotal;
       centerDeduction = rentUnit * effectiveSessions;
       centerDeductionLabel = `إيجار قاعة (${rentUnit} ج × ${effectiveSessions} حصة)`;
     } else {
       centerDeduction = rentUnit;
       centerDeductionLabel = `إيجار قاعة شهري ثابت (${rentUnit} ج)`;
     }
+    teacherGross = totalCollected - centerDeduction;
   } else {
     const centerPct =
       teacher.compensation?.centerPercent ?? Math.max(0, 100 - teacher.compensationValue);
     centerDeduction = Math.round((totalCollected * centerPct) / 100);
     centerDeductionLabel = `نسبة السنتر (${centerPct}%)`;
+    teacherGross = totalCollected - centerDeduction;
   }
-
-  const teacherGross = totalCollected - centerDeduction;
 
   const bonusesTotal = manualLines
     .filter((l) => l.type === 'bonus')

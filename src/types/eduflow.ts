@@ -41,14 +41,14 @@ export type ListStateMode = 'ready' | 'loading' | 'empty' | 'error';
 export type PaymentStatus = 'paid' | 'partial' | 'pending' | 'overdue';
 export type AttendanceStatus = 'present' | 'late' | 'absent' | 'unrecorded';
 export type AttendanceMethod = 'manual' | 'qr' | 'face';
-export type SessionStatus = 'recorded' | 'pending' | 'upcoming';
+export type SessionStatus = 'recorded' | 'pending' | 'upcoming' | 'cancelled';
 export type SessionType = 'regular' | 'makeup';
-export type CompensationType = 'percentage' | 'fixed_rent';
+export type CompensationType = 'percentage' | 'fixed_rent' | 'per_session';
 export type DayOfWeek = 'السبت' | 'الأحد' | 'الاثنين' | 'الثلاثاء' | 'الأربعاء' | 'الخميس' | 'الجمعة';
 
 export interface Center {
   id: string;
-  centerId: string;
+  centerId?: string;
   name: string;
   governorate: string;
   city: string;
@@ -71,6 +71,25 @@ export interface StudentParentInfo {
   phone: string;
 }
 
+export interface Guardian {
+  id: string;
+  centerId: string;
+  userId?: string;
+  name: string;
+  email: string;
+  phone: string;
+  createdAt: string;
+}
+
+export interface StudentGuardianLink {
+  id: string;
+  centerId: string;
+  studentId: string;
+  guardianId: string;
+  guardianUserId?: string;
+  relationship: string;
+}
+
 export interface StandingDiscountConfig {
   type: 'scholarship' | 'waiver';
   value: number;
@@ -82,6 +101,7 @@ export interface StandingDiscountConfig {
 export interface Student {
   id: string;
   centerId: string;
+  userId?: string;
   code: string;
   fullName: string;
   name: string;
@@ -90,9 +110,12 @@ export interface Student {
   parent: StudentParentInfo;
   parentName: string;
   parentPhone: string;
+  guardianIds?: string[];
+  guardianUserIds?: string[];
   groupIds: string[];
   standingDiscount?: number;
   standingDiscountConfig?: StandingDiscountConfig;
+  monthlyFee?: number;
   monthlyFeeOverride?: number;
   status: 'active' | 'inactive';
   paymentStatus: PaymentStatus;
@@ -103,10 +126,11 @@ export interface Student {
 }
 
 export interface TeacherCompensation {
-  type: 'percent' | 'rent';
+  type: 'percent' | 'rent' | 'per_session';
   centerPercent?: number;
   rentAmount?: number;
   rentMode?: 'monthly' | 'per_session';
+  perSessionAmount?: number;
 }
 
 export interface Teacher {
@@ -167,6 +191,7 @@ export interface AttendanceSession {
   id: string;
   centerId: string;
   groupId: string;
+  teacherId?: string;
   date: string;
   type: SessionType;
   originalSessionId?: string;
@@ -400,6 +425,8 @@ export interface SystemUser {
   role: UserRole;
   status: 'active' | 'invited';
   teacherId?: string;
+  studentId?: string;
+  guardianId?: string;
   invitationCode?: string;
   // PROTOTYPE-ONLY: hashed with Web Crypto SHA-256 + per-user salt
   passwordHash: string;
@@ -415,6 +442,7 @@ export interface AuthSession {
   name: string;
   teacherId?: string;
   parentPhone?: string;
+  guardianId?: string;
   studentId?: string;
   studentSessionId?: string;
   issuedAt: number;
@@ -445,6 +473,7 @@ export interface CenterSettings {
   reportsLockedDemo: boolean;
   discountPolicy?: DiscountPolicySettings;
   settlementBasis?: 'cash' | 'invoiced';
+  defaultStudentMonthlyFee?: number;
   receiptSettings?: ReceiptFormatSettings;
   biometricFaceEnabled?: boolean;
   studentPortalEnabled?: boolean;
@@ -493,7 +522,7 @@ export interface StudentDeviceLockout {
 
 export type IntegrationKey = 'payments' | 'whatsapp' | 'push' | 'ai' | 'storage';
 export type IntegrationMode = 'mock' | 'production';
-export type IntegrationHealthStatus = 'healthy' | 'degraded' | 'offline' | 'untested';
+export type IntegrationHealthStatus = 'healthy' | 'degraded' | 'offline' | 'untested' | 'unconfigured';
 
 /**
  * Non-secret integration configuration persisted per center.
@@ -502,6 +531,7 @@ export type IntegrationHealthStatus = 'healthy' | 'degraded' | 'offline' | 'unte
 export interface IntegrationConfig {
   key: IntegrationKey;
   label: string;
+  providerName?: string;
   enabled: boolean;
   mode: IntegrationMode;
   healthStatus: IntegrationHealthStatus;

@@ -38,7 +38,7 @@ function setupTestEnv() {
   const storage = new MockStorage();
   const adapter = new LocalStorageAdapter({ storage, debounceMs: 0 });
   let activeActor: PermissionActor | null = {
-    userId: 'u1',
+    userId: 'u-hamed',
     role: UserRole.OWNER,
     centerId: DEFAULT_CENTER_ID,
   };
@@ -70,9 +70,9 @@ test('generateStudentAccessCode uses unambiguous 8-char alphabet formatted XXXX-
 
 test('createOrRegenerateAccessCode stores only salted SHA-256 hash and logs action', async () => {
   const { storage, repos, service, getActor } = setupTestEnv();
-  const { account, plainCode } = await service.createOrRegenerateAccessCode('s1', getActor());
+  const { account, plainCode } = await service.createOrRegenerateAccessCode('st-mahmoud', getActor());
 
-  assert.equal(account.studentId, 's1');
+  assert.equal(account.studentId, 'st-mahmoud');
   assert.equal(account.status, 'active');
   assert.equal(account.hasPinSet, false);
   assert.ok(account.accessCodeHash.length >= 64);
@@ -90,7 +90,7 @@ test('createOrRegenerateAccessCode stores only salted SHA-256 hash and logs acti
 
 test('First login triggers PIN setup, then code + PIN succeeds and persists 7-day session', async () => {
   const { service, getActor } = setupTestEnv();
-  const { plainCode } = await service.createOrRegenerateAccessCode('s1', getActor());
+  const { plainCode } = await service.createOrRegenerateAccessCode('st-mahmoud', getActor());
   const now = 1_700_000_000_000;
 
   const firstAttempt = await service.loginWithCode({
@@ -111,7 +111,7 @@ test('First login triggers PIN setup, then code + PIN succeeds and persists 7-da
   });
   assert.equal(setupRes.ok, true);
   assert.ok(setupRes.session);
-  assert.equal(setupRes.session.studentId, 's1');
+  assert.equal(setupRes.session.studentId, 'st-mahmoud');
   assert.equal(setupRes.session.expiresAt - now, 7 * 24 * 60 * 60 * 1000);
 
   // Persisted session valid inside 7 days, invalid after 7 days
@@ -147,7 +147,7 @@ test('First login triggers PIN setup, then code + PIN succeeds and persists 7-da
 
 test('5 failed attempts enforce 10-minute lockout per account and per device', async () => {
   const { service, getActor } = setupTestEnv();
-  const { plainCode } = await service.createOrRegenerateAccessCode('s1', getActor());
+  const { plainCode } = await service.createOrRegenerateAccessCode('st-mahmoud', getActor());
   const baseNow = 1_700_000_000_000;
 
   await service.completeFirstLoginPinSetup({
@@ -213,7 +213,7 @@ test('5 failed attempts enforce 10-minute lockout per account and per device', a
 
 test('Regenerating code invalidates old code and active sessions; device limit of 2 supports evicting oldest', async () => {
   const { service, getActor } = setupTestEnv();
-  const { plainCode: code1 } = await service.createOrRegenerateAccessCode('s1', getActor());
+  const { plainCode: code1 } = await service.createOrRegenerateAccessCode('st-mahmoud', getActor());
   const t0 = 1_700_000_000_000;
 
   await service.completeFirstLoginPinSetup({
@@ -254,7 +254,7 @@ test('Regenerating code invalidates old code and active sessions; device limit o
     now: t0 + 3000,
   });
   assert.equal(dev3Confirmed.ok, true);
-  const activeNow = service.getActiveSessionsForStudent('s1', t0 + 4000);
+  const activeNow = service.getActiveSessionsForStudent('st-mahmoud', t0 + 4000);
   assert.equal(activeNow.length, 2);
   assert.deepEqual(
     activeNow.map((s) => s.deviceId).sort(),
@@ -262,11 +262,11 @@ test('Regenerating code invalidates old code and active sessions; device limit o
   );
 
   // Regenerate code -> invalidates code1 and clears all active sessions
-  const { plainCode: code2 } = await service.createOrRegenerateAccessCode('s1', getActor(), {
+  const { plainCode: code2 } = await service.createOrRegenerateAccessCode('st-mahmoud', getActor(), {
     isRegenerate: true,
   });
   assert.notEqual(code1, code2);
-  assert.equal(service.getActiveSessionsForStudent('s1', t0 + 5000).length, 0);
+  assert.equal(service.getActiveSessionsForStudent('st-mahmoud', t0 + 5000).length, 0);
   assert.equal(service.getPersistedStudentSession(t0 + 5000), null);
 
   const oldCodeLogin = await service.loginWithCode({
@@ -281,10 +281,10 @@ test('Regenerating code invalidates old code and active sessions; device limit o
 test('Strict UserRole.STUDENT permissions isolate data and block staff screens/mutations', () => {
   const { repos, setActor } = setupTestEnv();
   const studentActor: PermissionActor = {
-    userId: 's1',
+    userId: 'st-mahmoud',
     role: UserRole.STUDENT,
     centerId: DEFAULT_CENTER_ID,
-    studentId: 's1',
+    studentId: 'st-mahmoud',
   };
   setActor(studentActor);
 
@@ -298,11 +298,11 @@ test('Strict UserRole.STUDENT permissions isolate data and block staff screens/m
   // Scoped repository reads
   const visibleStudents = repos.students.list();
   assert.equal(visibleStudents.length, 1);
-  assert.equal(visibleStudents[0].id, 's1');
+  assert.equal(visibleStudents[0].id, 'st-mahmoud');
 
   const visibleAssessments = repos.assessments.list();
   visibleAssessments.forEach((a) => {
-    assert.ok(a.grades.every((g) => g.studentId === 's1'));
+    assert.ok(a.grades.every((g) => g.studentId === 'st-mahmoud'));
   });
 
   // Blocked staff resources: filtered list returns empty and assertCan/writes throw PermissionError
@@ -315,19 +315,19 @@ test('Strict UserRole.STUDENT permissions isolate data and block staff screens/m
   assert.throws(() => assertCan(studentActor, 'view', 'payments'), PermissionError);
   assert.throws(() => assertCan(studentActor, 'view', 'expenses'), PermissionError);
   assert.throws(() => assertCan(studentActor, 'view', 'users'), PermissionError);
-  assert.throws(() => repos.students.update('s1', { name: 'اختراق' }), PermissionError);
+  assert.throws(() => repos.students.update('st-mahmoud', { name: 'اختراق' }), PermissionError);
   assert.throws(
     () =>
       repos.payments.create({
         centerId: DEFAULT_CENTER_ID,
         receiptNumber: 'R-999',
         invoiceId: 'inv1',
-        studentId: 's1',
+        studentId: 'st-mahmoud',
         groupId: 'g1',
         amount: 100,
         method: 'نقدي',
         date: '2026-11-15',
-        recordedBy: 's1',
+        recordedBy: 'st-mahmoud',
         remainingAfter: 0,
       }),
     PermissionError
@@ -336,7 +336,7 @@ test('Strict UserRole.STUDENT permissions isolate data and block staff screens/m
 
 test('Plan feature flag studentPortal and Settings switch gate student login', async () => {
   const { repos, service, getActor } = setupTestEnv();
-  const { plainCode } = await service.createOrRegenerateAccessCode('s1', getActor());
+  const { plainCode } = await service.createOrRegenerateAccessCode('st-mahmoud', getActor());
 
   assert.equal(isPlanFeatureEnabled('basic', 'studentPortal'), false);
   assert.equal(isPlanFeatureEnabled('pro', 'studentPortal'), true);

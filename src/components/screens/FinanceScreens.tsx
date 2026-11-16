@@ -48,6 +48,7 @@ import {
 import { buildFinancialReportPdf } from '../../utils/pdfExportLogic';
 import {
   canDeleteInvoiceBatch,
+  formatMonthArabic,
   previewBulkInvoices,
 } from '../../features/billing/invoicesAndDiscounts';
 import {
@@ -121,9 +122,13 @@ export const PaymentsScreen: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<'all' | PaymentStatus>('all');
   const [groupFilter, setGroupFilter] = useState('all');
 
+  const currentMonthKey = useMemo(() => new Date().toISOString().slice(0, 7), []);
+  const monthStart = `${currentMonthKey}-01`;
+  const monthEnd = `${currentMonthKey}-28`;
+
   // Generate Month Invoices Modal (Phase 4)
   const [genModalOpen, setGenModalOpen] = useState(false);
-  const [genMonth, setGenMonth] = useState('2026-12');
+  const [genMonth, setGenMonth] = useState(currentMonthKey);
   const [genDueDay, setGenDueDay] = useState(1);
   const [genGroupIds, setGenGroupIds] = useState<string[]>(groups.map((g) => g.id));
   const [lastBatchInfo, setLastBatchInfo] = useState<{
@@ -207,8 +212,8 @@ export const PaymentsScreen: React.FC = () => {
                     groups,
                     students,
                     teachers,
-                    fromDate: '2026-11-01',
-                    toDate: '2026-11-30',
+                    fromDate: monthStart,
+                    toDate: monthEnd,
                     groupFilter,
                     focusTab: 'all',
                   })
@@ -417,7 +422,9 @@ export const PaymentsScreen: React.FC = () => {
                         </span>
                       </td>
                       <td className="py-3.5 px-4 font-bold text-[#1E293B]">{st?.name}</td>
-                      <td className="py-3.5 px-4 text-xs text-[#5B6B80]">{grp?.name}</td>
+                      <td className="py-3.5 px-4 text-xs text-[#5B6B80]">
+                        {grp?.name || (inv.groupId === 'general' ? 'اشتراك شهري عام' : '—')}
+                      </td>
                       <td className="py-3.5 px-4 tabular-nums text-xs">{inv.dueDate}</td>
                       <td className="py-3.5 px-4 tabular-nums">
                         <span className="font-bold block">{formatEGP(inv.total)}</span>
@@ -1264,9 +1271,10 @@ export const ExpensesScreen: React.FC = () => {
   const [categoryFilter, setCategoryFilter] = useState<'all' | ExpenseCategory>('all');
   const [drawerOpen, setDrawerOpen] = useState(false);
 
+  const currentMonthKey = useMemo(() => new Date().toISOString().slice(0, 7), []);
   const [cat, setCat] = useState<ExpenseCategory>('مستلزمات');
   const [amount, setAmount] = useState('');
-  const [date, setDate] = useState('2026-11-12');
+  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [desc, setDesc] = useState('');
   const [attachment, setAttachment] = useState('');
   const [err, setErr] = useState('');
@@ -1328,8 +1336,8 @@ export const ExpensesScreen: React.FC = () => {
                   groups,
                   students,
                   teachers,
-                  fromDate: '2026-11-01',
-                  toDate: '2026-11-30',
+                  fromDate: `${currentMonthKey}-01`,
+                  toDate: `${currentMonthKey}-28`,
                   groupFilter: 'all',
                   focusTab: 'revenue',
                 })
@@ -1366,7 +1374,9 @@ export const ExpensesScreen: React.FC = () => {
             <span className="text-3xl font-bold text-[#0F2A4A] tabular-nums block mt-2">
               {formatEGP(totalMonthExpenses)}
             </span>
-            <p className="text-xs text-[#5B6B80] mt-1">شهر نوفمبر 2026 — {expenses.length} قيود</p>
+            <p className="text-xs text-[#5B6B80] mt-1">
+              {formatMonthArabic(currentMonthKey)} — {expenses.length} قيود
+            </p>
           </div>
 
           <div className="pt-4 border-t border-[#E2E8F0]">
@@ -1562,7 +1572,7 @@ export const ExpensesScreen: React.FC = () => {
           <Field label="البيان / الوصف" htmlFor="exp-desc" required>
             <TextInput
               id="exp-desc"
-              placeholder="مثال: فاتورة كهرباء شهر نوفمبر"
+              placeholder="مثال: فاتورة كهرباء / صيانة قاعة"
               value={desc}
               onChange={(e) => setDesc(e.target.value)}
             />

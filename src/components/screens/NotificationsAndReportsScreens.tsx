@@ -26,13 +26,14 @@ import {
   StatusChip,
   TextInput,
 } from '../ui/Primitives';
-import { calculateTeacherShare, formatEGP } from '../../utils/eduflowLogic';
+import { formatEGP } from '../../utils/eduflowLogic';
 import {
   buildAttendanceHistoryPdf,
   buildFinancialReportPdf,
 } from '../../utils/pdfExportLogic';
 import { buildReportCsv, downloadCsvFile } from '../../features/export/excelExport';
 import { buildWhatsAppUrl } from '../../features/messaging/whatsappService';
+import { calculateTeacherSettlement } from '../../features/settlements/teacherSettlement';
 
 // 17) Notifications Full Page Screen
 export const NotificationsScreen: React.FC = () => {
@@ -291,8 +292,9 @@ export const ReportsScreen: React.FC = () => {
   const canManageSettings = can(currentActor, 'update', 'settings');
 
   const [tab, setTab] = useState<'attendance' | 'revenue' | 'overdue' | 'teachers'>('attendance');
-  const [fromDate, setFromDate] = useState('2026-11-01');
-  const [toDate, setToDate] = useState('2026-11-30');
+  const currentMonthKey = new Date().toISOString().slice(0, 7);
+  const [fromDate, setFromDate] = useState(`${currentMonthKey}-01`);
+  const [toDate, setToDate] = useState(`${currentMonthKey}-28`);
   const [groupFilter, setGroupFilter] = useState('all');
 
   const activeTab =
@@ -353,9 +355,29 @@ export const ReportsScreen: React.FC = () => {
     );
   };
 
-  const totalCollected = payments.reduce((s, p) => s + p.amount, 0) + 42000;
+  const totalCollected = payments.reduce((s, p) => s + p.amount, 0);
   const totalExpenses = expenses.reduce((s, e) => s + e.amount, 0);
   const netCenter = totalCollected - totalExpenses;
+
+  const reportSessions = sessions.filter((s) => {
+    if (groupFilter !== 'all' && s.groupId !== groupFilter) return false;
+    if (fromDate && s.date < fromDate) return false;
+    if (toDate && s.date > toDate) return false;
+    return s.status === 'recorded';
+  });
+
+  const allReportEntries = reportSessions.flatMap((s) => s.entries);
+  const recordedAttendanceEntries = allReportEntries.filter((e) => e.status !== 'unrecorded');
+  const presentOrLateEntriesCount = recordedAttendanceEntries.filter(
+    (e) => e.status === 'present' || e.status === 'late'
+  ).length;
+  const absentEntriesCount = recordedAttendanceEntries.filter((e) => e.status === 'absent').length;
+  const overallAttendanceRate =
+    recordedAttendanceEntries.length > 0
+      ? Math.round((presentOrLateEntriesCount / recordedAttendanceEntries.length) * 1000) / 10
+      : 0;
+  const overdueInvoices = invoices.filter((i) => i.status === 'overdue' && i.total > i.paid);
+  const settlementMonthInput = fromDate ? fromDate.slice(0, 7) : currentMonthKey;
 
   return (
     <div className="space-y-5">
@@ -480,19 +502,19 @@ export const ReportsScreen: React.FC = () => {
                 <Card className="p-4">
                   <span className="text-xs text-[#5B6B80]">متوسط نسبة الحضور العام</span>
                   <span className="text-2xl font-bold text-[#0F766E] tabular-nums block mt-1">
-                    89.4%
+                    {overallAttendanceRate}%
                   </span>
                 </Card>
                 <Card className="p-4">
                   <span className="text-xs text-[#5B6B80]">إجمالي الحصص المنعقدة</span>
                   <span className="text-2xl font-bold text-[#0F2A4A] tabular-nums block mt-1">
-                    48 حصة
+                    {reportSessions.length} حصة
                   </span>
                 </Card>
                 <Card className="p-4">
                   <span className="text-xs text-[#5B6B80]">حالات الغياب المرصودة</span>
                   <span className="text-2xl font-bold text-[#991B1B] tabular-nums block mt-1">
-                    34 حالة
+                    {absentEntriesCount} حالة
                   </span>
                 </Card>
               </div>
@@ -501,25 +523,40 @@ export const ReportsScreen: React.FC = () => {
                 <h3 className="text-sm font-bold text-[#0F2A4A] mb-4">
                   نسبة التزام المجموعات بالحضور الشهري
                 </h3>
-                <div className="space-y-3">
-                  {groups.slice(0, 5).map((g, idx) => {
-                    const rate = [94, 91, 86, 89, 92][idx % 5];
-                    return (
-                      <div key={g.id} className="space-y-1">
-                        <div className="flex justify-between text-xs">
-                          <span className="font-bold text-[#1E293B]">{g.name}</span>
-                          <span className="font-bold text-[#0F766E] tabular-nums">{rate}%</span>
+                {groups.length === 0 ? (
+                  <EmptyState
+                    title="لا توجد مجموعات مسجلة بعد"
+                    description="ستظهر نسب التزام الحضور لكل مجموعة فور إنشاء المجموعات ورصد الحصص."
+                  />
+                ) : (
+                  <div className="space-y-3">
+                    {groups.slice(0, 5).map((g) => {
+                      const gEntries = reportSessions
+                        .filter((s) => s.groupId === g.id)
+                        .flatMap((s) => s.entries)
+                        .filter((e) => e.status !== 'unrecorded');
+                      const gPresent = gEntries.filter(
+                        (e) => e.status === 'present' || e.status === 'late'
+                      ).length;
+                      const rate =
+                        gEntries.length > 0 ? Math.round((gPresent / gEntries.length) * 100) : 0;
+                      return (
+                        <div key={g.id} className="space-y-1">
+                          <div className="flex justify-between text-xs">
+                            <span className="font-bold text-[#1E293B]">{g.name}</span>
+                            <span className="font-bold text-[#0F766E] tabular-nums">{rate}%</span>
+                          </div>
+                          <div className="h-2.5 rounded-full bg-slate-100 overflow-hidden">
+                            <div
+                              className="h-full bg-[#0F766E] rounded-full"
+                              style={{ width: `${rate}%` }}
+                            />
+                          </div>
                         </div>
-                        <div className="h-2.5 rounded-full bg-slate-100 overflow-hidden">
-                          <div
-                            className="h-full bg-[#0F766E] rounded-full"
-                            style={{ width: `${rate}%` }}
-                          />
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
+                      );
+                    })}
+                  </div>
+                )}
               </Card>
             </div>
           )}
@@ -547,51 +584,67 @@ export const ReportsScreen: React.FC = () => {
                 </Card>
               </div>
 
-              <Card padding="p-0" className="overflow-hidden">
-                <table className="w-full text-right border-collapse">
-                  <thead>
-                    <tr className="bg-slate-50 border-b border-[#E2E8F0] text-xs font-bold text-[#5B6B80]">
-                      <th className="py-3 px-4">المجموعة</th>
-                      <th className="py-3 px-4">عدد الطلاب</th>
-                      <th className="py-3 px-4">الاشتراك الشهري</th>
-                      <th className="py-3 px-4">المحصّل الفعلي</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-[#E2E8F0] text-sm">
-                    {groups.slice(0, 5).map((g) => {
-                      const cnt = students.filter((s) => s.groupIds.includes(g.id)).length + 18;
-                      return (
-                        <tr key={g.id}>
-                          <td className="py-3 px-4 font-bold">{g.name}</td>
-                          <td className="py-3 px-4 tabular-nums">{cnt}</td>
-                          <td className="py-3 px-4 tabular-nums">{formatEGP(g.monthlyPrice)}</td>
-                          <td className="py-3 px-4 tabular-nums font-bold text-[#0F766E]">
-                            {formatEGP(cnt * g.monthlyPrice * 0.9)}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </Card>
+              {groups.length === 0 ? (
+                <EmptyState
+                  title="لا توجد مجموعات مالية لعرضها"
+                  description="عند إضافة المجموعات وتسجيل الدفعات سيظهر هنا ملخص تحصيل كل مجموعة."
+                />
+              ) : (
+                <Card padding="p-0" className="overflow-hidden">
+                  <table className="w-full text-right border-collapse">
+                    <thead>
+                      <tr className="bg-slate-50 border-b border-[#E2E8F0] text-xs font-bold text-[#5B6B80]">
+                        <th className="py-3 px-4">المجموعة</th>
+                        <th className="py-3 px-4">عدد الطلاب</th>
+                        <th className="py-3 px-4">الاشتراك الشهري</th>
+                        <th className="py-3 px-4">المحصّل الفعلي</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#E2E8F0] text-sm">
+                      {groups.slice(0, 5).map((g) => {
+                        const cnt = students.filter(
+                          (s) => s.status === 'active' && s.groupIds.includes(g.id)
+                        ).length;
+                        const collectedForGroup = payments
+                          .filter((p) => p.groupId === g.id)
+                          .reduce((sum, p) => sum + p.amount, 0);
+                        return (
+                          <tr key={g.id}>
+                            <td className="py-3 px-4 font-bold">{g.name}</td>
+                            <td className="py-3 px-4 tabular-nums">{cnt}</td>
+                            <td className="py-3 px-4 tabular-nums">{formatEGP(g.monthlyPrice)}</td>
+                            <td className="py-3 px-4 tabular-nums font-bold text-[#0F766E]">
+                              {formatEGP(collectedForGroup)}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </Card>
+              )}
             </div>
           )}
 
           {activeTab === 'overdue' && (
-            <Card padding="p-0" className="overflow-hidden">
-              <table className="w-full text-right border-collapse">
-                <thead>
-                  <tr className="bg-slate-50 border-b border-[#E2E8F0] text-xs font-bold text-[#5B6B80]">
-                    <th className="py-3 px-4">الطالب</th>
-                    <th className="py-3 px-4">الفاتورة</th>
-                    <th className="py-3 px-4">أيام التأخير</th>
-                    <th className="py-3 px-4">المبلغ المتبقي</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[#E2E8F0] text-sm">
-                  {invoices
-                    .filter((i) => i.status === 'overdue')
-                    .map((inv) => {
+            overdueInvoices.length === 0 ? (
+              <EmptyState
+                title="لا توجد متأخرات مستحقة"
+                description="جميع فواتير الطلاب الحالية منتظمة أو مدفوعة."
+              />
+            ) : (
+              <Card padding="p-0" className="overflow-hidden">
+                <table className="w-full text-right border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50 border-b border-[#E2E8F0] text-xs font-bold text-[#5B6B80]">
+                      <th className="py-3 px-4">الطالب</th>
+                      <th className="py-3 px-4">الفاتورة</th>
+                      <th className="py-3 px-4">أيام التأخير</th>
+                      <th className="py-3 px-4">المبلغ المتبقي</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#E2E8F0] text-sm">
+                    {overdueInvoices.map((inv) => {
                       const st = students.find((s) => s.id === inv.studentId);
                       return (
                         <tr key={inv.id}>
@@ -606,52 +659,73 @@ export const ReportsScreen: React.FC = () => {
                         </tr>
                       );
                     })}
-                </tbody>
-              </table>
-            </Card>
+                  </tbody>
+                </table>
+              </Card>
+            )
           )}
 
           {activeTab === 'teachers' && canViewTeacherShares && (
-            <Card padding="p-0" className="overflow-hidden">
-              <table className="w-full text-right border-collapse">
-                <thead>
-                  <tr className="bg-slate-50 border-b border-[#E2E8F0] text-xs font-bold text-[#5B6B80]">
-                    <th className="py-3 px-4">المدرس</th>
-                    <th className="py-3 px-4">نظام التعاقد</th>
-                    <th className="py-3 px-4">إجمالي تحصيل مجموعاته</th>
-                    <th className="py-3 px-4">مستحقات المدرس</th>
-                    <th className="py-3 px-4">صافي حصة السنتر</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[#E2E8F0] text-sm">
-                  {teachers.map((t, i) => {
-                    const gross = [28400, 22100, 19500, 24000, 16800][i % 5];
-                    const split = calculateTeacherShare(
-                      gross,
-                      t.compensationType,
-                      t.compensationValue
-                    );
-                    return (
-                      <tr key={t.id}>
-                        <td className="py-3 px-4 font-bold">{t.name}</td>
-                        <td className="py-3 px-4 text-xs">
-                          {t.compensationType === 'percentage'
-                            ? `نسبة ${t.compensationValue}%`
-                            : `إيجار ثابت ${formatEGP(t.compensationValue)}`}
-                        </td>
-                        <td className="py-3 px-4 tabular-nums">{formatEGP(gross)}</td>
-                        <td className="py-3 px-4 tabular-nums font-bold text-[#0F766E]">
-                          {formatEGP(split.teacherShare)}
-                        </td>
-                        <td className="py-3 px-4 tabular-nums font-bold text-[#0F2A4A]">
-                          {formatEGP(split.centerShare)}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </Card>
+            teachers.length === 0 ? (
+              <EmptyState
+                title="لا يوجد مدرسون مسجلون"
+                description="أضف المدرسين لعرض مستحقاتهم وتعاقداتهم الشهرية."
+              />
+            ) : (
+              <Card padding="p-0" className="overflow-hidden">
+                <table className="w-full text-right border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50 border-b border-[#E2E8F0] text-xs font-bold text-[#5B6B80]">
+                      <th className="py-3 px-4">المدرس</th>
+                      <th className="py-3 px-4">نظام التعاقد</th>
+                      <th className="py-3 px-4">التحصيل / الحصص المكتملة</th>
+                      <th className="py-3 px-4">مستحقات المدرس</th>
+                      <th className="py-3 px-4">صافي حصة السنتر</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#E2E8F0] text-sm">
+                    {teachers.map((t) => {
+                      const calc = calculateTeacherSettlement({
+                        teacher: t,
+                        groups,
+                        invoices,
+                        payments,
+                        sessions,
+                        settlements: [],
+                        monthInput: settlementMonthInput,
+                        basis: centerSettings.settlementBasis || 'cash',
+                        manualLines: [],
+                        applyCarryForward: false,
+                      });
+                      const centerShare = calc.centerDeduction;
+                      return (
+                        <tr key={t.id}>
+                          <td className="py-3 px-4 font-bold">{t.name}</td>
+                          <td className="py-3 px-4 text-xs">
+                            {t.compensationType === 'percentage'
+                              ? `نسبة ${t.compensationValue}%`
+                              : t.compensationType === 'per_session'
+                              ? `${formatEGP(t.compensationValue)} / حصة مكتملة`
+                              : `إيجار ثابت ${formatEGP(t.compensationValue)}`}
+                          </td>
+                          <td className="py-3 px-4 tabular-nums">
+                            {t.compensationType === 'per_session'
+                              ? `${calc.sessionsHeldTotal} حصة مكتملة`
+                              : formatEGP(calc.totalCollected)}
+                          </td>
+                          <td className="py-3 px-4 tabular-nums font-bold text-[#0F766E]">
+                            {formatEGP(calc.teacherGross)}
+                          </td>
+                          <td className="py-3 px-4 tabular-nums font-bold text-[#0F2A4A]">
+                            {formatEGP(centerShare)}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </Card>
+            )
           )}
         </div>
 

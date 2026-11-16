@@ -16,6 +16,7 @@ import {
   FaceTemplateRecord,
   FileAssetRecord,
   Group,
+  Guardian,
   IntegrationConfig,
   IntegrationKey,
   Invoice,
@@ -31,6 +32,7 @@ import {
   StandingDiscountConfig,
   Student,
   StudentDeviceSession,
+  StudentGuardianLink,
   StudentPortalAccount,
   SystemUser,
   Teacher,
@@ -69,7 +71,7 @@ import {
   createDeterministicFaceHash,
   hasActiveBiometricConsent,
 } from '../features/biometrics/faceAttendanceService';
-import { computeInvoiceStatus } from '../utils/eduflowLogic';
+import { computeInvoiceStatus, formatDateDDMMYYYY } from '../utils/eduflowLogic';
 import { PdfDocumentPayload } from '../utils/pdfExportLogic';
 import { createPasswordCredential } from '../utils/authCrypto';
 import {
@@ -188,6 +190,8 @@ interface EduflowContextValue {
 
   // Data collections (read via repositories)
   centers: Center[];
+  guardians: Guardian[];
+  studentGuardians: StudentGuardianLink[];
   students: Student[];
   teachers: Teacher[];
   groups: Group[];
@@ -519,6 +523,8 @@ function resolveInitialScreen(
         role: staffSession.role,
         centerId: staffSession.centerId,
         teacherId: staffSession.teacherId,
+        studentId: staffSession.studentId,
+        guardianId: staffSession.guardianId,
         parentPhone: staffSession.parentPhone,
       }
     : null;
@@ -630,15 +636,27 @@ export const EduflowProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
     if (!authSession) return null;
     if (canUseRoleSwitcher && previewRole) {
+      const previewTeacherId =
+        authSession.teacherId ||
+        (previewRole === UserRole.TEACHER
+          ? defaultStorageAdapter.getCollection('teachers')[0]?.id
+          : undefined);
+      const previewGuardian =
+        previewRole === UserRole.PARENT
+          ? defaultStorageAdapter.getCollection('guardians')[0]
+          : undefined;
       return {
         userId: authSession.userId,
         role: previewRole,
         centerId: authSession.centerId,
-        teacherId:
-          previewRole === UserRole.TEACHER ? authSession.teacherId || 't1' : undefined,
+        teacherId: previewRole === UserRole.TEACHER ? previewTeacherId : undefined,
+        guardianId:
+          previewRole === UserRole.PARENT
+            ? authSession.guardianId || previewGuardian?.id
+            : undefined,
         parentPhone:
           previewRole === UserRole.PARENT
-            ? authSession.parentPhone || '01002349871'
+            ? authSession.parentPhone || previewGuardian?.phone
             : undefined,
       };
     }
@@ -647,6 +665,8 @@ export const EduflowProvider: React.FC<{ children: React.ReactNode }> = ({ child
       role: authSession.role,
       centerId: authSession.centerId,
       teacherId: authSession.teacherId,
+      studentId: authSession.studentId,
+      guardianId: authSession.guardianId,
       parentPhone: authSession.parentPhone,
     };
   }, [authSession, studentAuthSession, canUseRoleSwitcher, previewRole]);
@@ -658,6 +678,11 @@ export const EduflowProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   // Read live collections strictly from repositories (scoped by currentActor inside repositories)
   const centers = useMemo(() => repositories.centers.list(), [syncTick, currentActor]);
+  const guardians = useMemo(() => repositories.guardians.list(), [syncTick, currentActor]);
+  const studentGuardians = useMemo(
+    () => repositories.studentGuardians.list(),
+    [syncTick, currentActor]
+  );
   const students = useMemo(() => repositories.students.list(), [syncTick, currentActor]);
   const teachers = useMemo(() => repositories.teachers.list(), [syncTick, currentActor]);
   const groups = useMemo(() => repositories.groups.list(), [syncTick, currentActor]);
@@ -738,10 +763,10 @@ export const EduflowProvider: React.FC<{ children: React.ReactNode }> = ({ child
     [authSession, users]
   );
 
-  const [selectedStudentId, setSelectedStudentId] = useState<string>('s1');
-  const [selectedTeacherId, setSelectedTeacherId] = useState<string>('t1');
-  const [selectedSessionId, setSelectedSessionId] = useState<string>('sess-today-2');
-  const [lastSavedSessionId, setLastSavedSessionId] = useState<string | null>('sess-today-1');
+  const [selectedStudentId, setSelectedStudentId] = useState<string>(() => students[0]?.id || '');
+  const [selectedTeacherId, setSelectedTeacherId] = useState<string>(() => teachers[0]?.id || '');
+  const [selectedSessionId, setSelectedSessionId] = useState<string>(() => sessions[0]?.id || '');
+  const [lastSavedSessionId, setLastSavedSessionId] = useState<string | null>(null);
 
   // Student drawer
   const [studentDrawerOpen, setStudentDrawerOpen] = useState(false);
@@ -1006,7 +1031,7 @@ export const EduflowProvider: React.FC<{ children: React.ReactNode }> = ({ child
       const prev = currentRole;
       setPreviewRole(role);
       if (role === UserRole.TEACHER) {
-        setSelectedTeacherId(authSession?.teacherId || 't1');
+        setSelectedTeacherId(authSession?.teacherId || teachers[0]?.id || '');
       }
       if (role === UserRole.PARENT) {
         setCurrentScreen(ScreenId.PARENT_PORTAL);
@@ -1021,7 +1046,7 @@ export const EduflowProvider: React.FC<{ children: React.ReactNode }> = ({ child
         after: { role },
       });
     },
-    [authSession?.teacherId, canUseRoleSwitcher, currentRole, currentScreen, appendActivityLog, showToast]
+    [authSession?.teacherId, teachers, canUseRoleSwitcher, currentRole, currentScreen, appendActivityLog, showToast]
   );
 
   const loginWithCredentials = useCallback(
@@ -1036,6 +1061,8 @@ export const EduflowProvider: React.FC<{ children: React.ReactNode }> = ({ child
           role: result.session.role,
           centerId: result.session.centerId,
           teacherId: result.session.teacherId,
+          studentId: result.session.studentId,
+          guardianId: result.session.guardianId,
           parentPhone: result.session.parentPhone,
         };
         setActivePermissionActor(nextActor);
@@ -1073,6 +1100,7 @@ export const EduflowProvider: React.FC<{ children: React.ReactNode }> = ({ child
           userId: result.session.userId,
           role: result.session.role,
           centerId: result.session.centerId,
+          guardianId: result.session.guardianId,
           parentPhone: result.session.parentPhone,
         };
         setActivePermissionActor(nextActor);
@@ -1497,10 +1525,10 @@ export const EduflowProvider: React.FC<{ children: React.ReactNode }> = ({ child
       runPermitted(() => {
         const st = repositories.students.get(studentId);
         if (!st) return;
-        const actorName = authSession?.name || 'أ. محمود عبد الرحمن';
+        const actorName = authSession?.name || 'إدارة السنتر';
         const note = {
           id: `n-${Date.now()}`,
-          date: '12 نوفمبر 2026',
+          date: formatDateDDMMYYYY(new Date()),
           author: `${actorName} (${currentRole})`,
           text,
         };
@@ -1543,7 +1571,7 @@ export const EduflowProvider: React.FC<{ children: React.ReactNode }> = ({ child
           remainingAfter === 0 ? 0 : targetInvoice.daysOverdue
         );
 
-        const actorName = authSession?.name || 'أ. محمود عبد الرحمن';
+        const actorName = authSession?.name || 'إدارة السنتر';
         const receipt = repositories.payments.create({
           centerId: authSession?.centerId || DEFAULT_CENTER_ID,
           receiptNumber: `RCP-${Math.floor(8850 + Math.random() * 900)}`,
@@ -1621,7 +1649,7 @@ export const EduflowProvider: React.FC<{ children: React.ReactNode }> = ({ child
           }
 
           const batchId = `batch-${Date.now()}`;
-          const actorName = authSession?.name || 'أ. محمود عبد الرحمن';
+          const actorName = authSession?.name || 'إدارة السنتر';
           let seq = currentInvoices.length + 110;
 
           preview.itemsToCreate.forEach((item) => {
@@ -1738,7 +1766,7 @@ export const EduflowProvider: React.FC<{ children: React.ReactNode }> = ({ child
           return false;
         }
 
-        const actorName = authSession?.name || 'أ. محمود عبد الرحمن';
+        const actorName = authSession?.name || 'إدارة السنتر';
         repositories.discounts.create({
           centerId: authSession?.centerId || DEFAULT_CENTER_ID,
           studentId: inv.studentId,
@@ -1806,7 +1834,7 @@ export const EduflowProvider: React.FC<{ children: React.ReactNode }> = ({ child
           applyCarryForward: payload.applyCarryForward,
         });
 
-        const actorName = authSession?.name || 'أ. محمود عبد الرحمن';
+        const actorName = authSession?.name || 'إدارة السنتر';
         const settlement = repositories.settlements.create({
           centerId: authSession?.centerId || DEFAULT_CENTER_ID,
           teacherId: teacher.id,
@@ -1944,6 +1972,11 @@ export const EduflowProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 rentAmount: teacherData.compensationValue,
                 rentMode: teacherData.rentMode || 'monthly',
               }
+            : teacherData.compensationType === 'per_session'
+            ? {
+                type: 'per_session' as const,
+                perSessionAmount: teacherData.compensationValue,
+              }
             : {
                 type: 'percent' as const,
                 centerPercent: Math.max(0, 100 - teacherData.compensationValue),
@@ -1979,7 +2012,7 @@ export const EduflowProvider: React.FC<{ children: React.ReactNode }> = ({ child
           entries: preparedEntries,
         });
 
-        const actorName = authSession?.name || 'أ. محمود عبد الرحمن';
+        const actorName = authSession?.name || 'إدارة السنتر';
         const nowIso = new Date().toISOString();
         const existingRecords = repositories.attendanceRecords
           .list()
@@ -2058,7 +2091,7 @@ export const EduflowProvider: React.FC<{ children: React.ReactNode }> = ({ child
         const makeupSess = repositories.sessions.get(payload.makeupSessionId);
         if (!origSess || !makeupSess) return false;
 
-        const actorName = authSession?.name || 'أ. محمود عبد الرحمن';
+        const actorName = authSession?.name || 'إدارة السنتر';
         const nowIso = new Date().toISOString();
 
         // Mark in original session's attendanceRecord with compensatedBy
@@ -2152,7 +2185,7 @@ export const EduflowProvider: React.FC<{ children: React.ReactNode }> = ({ child
       runPermitted(() => {
         const sess = repositories.sessions.get(payload.sessionId);
         if (!sess) return false;
-        const actorName = authSession?.name || 'أ. محمود عبد الرحمن';
+        const actorName = authSession?.name || 'إدارة السنتر';
         const nowIso = new Date().toISOString();
 
         const hasEntry = sess.entries.some((e) => e.studentId === payload.studentId);
@@ -2286,7 +2319,7 @@ export const EduflowProvider: React.FC<{ children: React.ReactNode }> = ({ child
       runPermitted(() => {
         const st = repositories.students.get(payload.studentId);
         if (!st) return null;
-        const actorName = authSession?.name || 'أ. محمود عبد الرحمن';
+        const actorName = authSession?.name || 'إدارة السنتر';
         const nowIso = new Date().toISOString();
         const existing = repositories.consents
           .list()
@@ -2353,7 +2386,7 @@ export const EduflowProvider: React.FC<{ children: React.ReactNode }> = ({ child
           repositories.faceTemplates.update(f.id, { status: 'deleted' });
         });
 
-        const actorName = authSession?.name || 'أ. محمود عبد الرحمن';
+        const actorName = authSession?.name || 'إدارة السنتر';
         const created = repositories.faceTemplates.create({
           centerId: authSession?.centerId || DEFAULT_CENTER_ID,
           studentId: st.id,
@@ -2413,7 +2446,7 @@ export const EduflowProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const addExpense = useCallback(
     (exp: Omit<Expense, 'id' | 'centerId' | 'addedBy'>) =>
       runPermitted(() => {
-        const actorName = authSession?.name || 'أ. محمود عبد الرحمن';
+        const actorName = authSession?.name || 'إدارة السنتر';
         const created = repositories.expenses.create({
           ...exp,
           centerId: authSession?.centerId || DEFAULT_CENTER_ID,
@@ -2602,7 +2635,10 @@ export const EduflowProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const inviteUser = useCallback<EduflowContextValue['inviteUser']>(
     async (u) => {
       try {
-        const cred = await createPasswordCredential('EduFlow@2026');
+        const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+        const bytes = crypto.getRandomValues(new Uint8Array(10));
+        const tempPass = Array.from(bytes, (b) => alphabet[b % alphabet.length]).join('');
+        const cred = await createPasswordCredential(tempPass);
         const created = repositories.users.create({
           ...u,
           centerId: authSession?.centerId || DEFAULT_CENTER_ID,
@@ -2618,7 +2654,7 @@ export const EduflowProvider: React.FC<{ children: React.ReactNode }> = ({ child
           summary: `دعوة مستخدم جديد "${created.name}" بدور (${created.role})`,
           after: { id: created.id, email: created.email, role: created.role },
         });
-        showToast(`تم إرسال دعوة الانضمام إلى ${u.name}`);
+        showToast(`تم إرسال دعوة الانضمام إلى ${u.name} — كلمة المرور المؤقتة: ${tempPass}`);
       } catch (err) {
         if (err instanceof PermissionError) {
           showToast(err.message, 'error');
@@ -2759,7 +2795,7 @@ export const EduflowProvider: React.FC<{ children: React.ReactNode }> = ({ child
         message = `اتصال بوابة Paymob التجريبية سليم (جلسة فحص ${sess.orderId}).`;
       } else if (key === 'whatsapp') {
         const res = await defaultMockWhatsAppProvider.sendTemplate({
-          to: '01001122334',
+          to: prevSettings.phone || '201000000001',
           templateName: 'health_check_ar',
           language: 'ar',
           variables: { '1': prevSettings.name },
@@ -2922,7 +2958,7 @@ export const EduflowProvider: React.FC<{ children: React.ReactNode }> = ({ child
               })
             : await defaultMockWhatsAppProvider.sendText({
                 to: phone,
-                body: 'رسالة متابعة تجريبية من سنتر النخبة',
+                body: `رسالة متابعة تجريبية من ${repositories.meta.getCenterSettings().name || 'سنتر حامد البيلي'}`,
                 lastInboundAt:
                   mode === 'text_inside_24h'
                     ? new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()
@@ -3110,6 +3146,8 @@ export const EduflowProvider: React.FC<{ children: React.ReactNode }> = ({ child
         newCenterEmptyMode,
         setNewCenterEmptyMode,
         centers,
+        guardians,
+        studentGuardians,
         students,
         teachers,
         groups,

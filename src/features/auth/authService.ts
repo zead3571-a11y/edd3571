@@ -191,7 +191,12 @@ export class AuthService {
       role: updatedUser.role,
       name: updatedUser.name,
       teacherId: updatedUser.teacherId,
-      parentPhone: updatedUser.role === UserRole.PARENT ? updatedUser.phone : undefined,
+      parentPhone:
+        updatedUser.role === UserRole.PARENT && normalizePhoneDigits(updatedUser.phone).length >= 8
+          ? updatedUser.phone
+          : undefined,
+      guardianId: updatedUser.role === UserRole.PARENT ? updatedUser.guardianId : undefined,
+      studentId: updatedUser.role === UserRole.STUDENT ? updatedUser.studentId : undefined,
       issuedAt: now,
       expiresAt: now + SESSION_DURATION_MS,
     };
@@ -460,7 +465,7 @@ export class AuthService {
       const teacherData: Omit<Teacher, 'id'> = {
         centerId,
         name: payload.firstTeacher.name.trim(),
-        phone: payload.firstTeacher.phone.trim() || '01000000000',
+        phone: payload.firstTeacher.phone.trim(),
         subjects: [payload.firstTeacher.subject.trim() || 'فيزياء'],
         compensation: { type: 'percent', centerPercent: 30 },
         compensationType: 'percentage',
