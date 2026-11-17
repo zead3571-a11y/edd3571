@@ -204,6 +204,35 @@ export function createDefaultScheduler(): JobScheduler {
     },
   });
 
+  scheduler.registerJob({
+    name: 'auto-payment-reminders',
+    label: 'إرسال تذكيرات السداد التلقائية لأولياء الأمور',
+    scheduleLabel: 'يومياً عند الساعة 10:00 ص (أو تشغيل يدوي)',
+    intervalMs: 24 * 60 * 60 * 1000,
+    handler: ({ centerId, repos }) => {
+      const settings = repos.meta.getCenterSettings();
+      const rule = settings.autoReminderRule || {
+        enabled: true,
+        daysOverdueThreshold: 1,
+        includePendingDueSoon: true,
+        channel: 'cloud_api' as const,
+      };
+      if (!rule.enabled) {
+        return { summary: 'التذكيرات التلقائية متوقفة من الإعدادات.' };
+      }
+      const invoices = repos.invoices.list({ centerId });
+      const eligible = invoices.filter(
+        (i) =>
+          i.total > i.paid &&
+          i.status !== 'paid' &&
+          (i.status === 'overdue' || (rule.includePendingDueSoon && (i.status === 'pending' || i.status === 'partial')))
+      );
+      return {
+        summary: `جاهز لإرسال تذكيرات لعدد ${eligible.length} فاتورة غير مسددة عبر ${rule.channel === 'cloud_api' ? 'واتساب Cloud API' : 'صندوق الرسائل'}.`,
+      };
+    },
+  });
+
   return scheduler;
 }
 

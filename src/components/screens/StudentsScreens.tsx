@@ -26,9 +26,13 @@ import {
   UserPlus,
   UserX,
   Wallet,
+  Trophy,
+  Award,
+  Sparkles,
+  Lock,
 } from 'lucide-react';
 import { useEduflow } from '../../context/EduflowContext';
-import { PaymentStatus, ScreenId } from '../../types/eduflow';
+import { GamificationPointEntry, PaymentStatus, ScreenId, UserRole } from '../../types/eduflow';
 import { can } from '../../permissions/permissions';
 import { Can } from '../../permissions/Can';
 import {
@@ -36,6 +40,7 @@ import {
   Card,
   EmptyState,
   ErrorState,
+  Field,
   InitialAvatar,
   ListStateSwitcher,
   Modal,
@@ -45,7 +50,7 @@ import {
   TextInput,
   paymentStatusChipProps,
 } from '../ui/Primitives';
-import { formatDateDDMMYYYY, formatEGP } from '../../utils/eduflowLogic';
+import { formatDateDDMMYYYY, formatEGP, formatNumber } from '../../utils/eduflowLogic';
 import { buildStudentParentReportPdf } from '../../utils/pdfExportLogic';
 import { buildStudentsCsv, downloadCsvFile } from '../../features/export/excelExport';
 import { encodeStudentQrPayload, generateQrDataUrl } from '../../features/qr/qrService';
@@ -55,15 +60,22 @@ import {
 } from '../../features/biometrics/faceAttendanceService';
 import { BulkPrintSlipItem } from '../../features/studentPortal/studentAuthService';
 import { isPlanFeatureEnabled } from '../../data/seedData';
+import {
+  computeLeaderboard,
+  computeStudentPointsTotal,
+  getPointsBadge,
+} from '../../features/gamification/pointsService';
 
 // 4) Students List
 export const StudentsListScreen: React.FC = () => {
   const {
     currentActor,
+    currentRole,
     students,
     groups,
     teachers,
     stages,
+    pointEntries,
     centerSettings,
     studentPortalAvailable,
     listStateMode,
@@ -74,6 +86,7 @@ export const StudentsListScreen: React.FC = () => {
     bulkMoveStudentsToGroup,
     bulkDeactivateStudents,
     bulkGenerateStudentSlips,
+    togglePlanFeatureOverride,
     openLockedFeatureModal,
     setSelectedStudentId,
     logExcelExport,
@@ -85,6 +98,11 @@ export const StudentsListScreen: React.FC = () => {
   const canUpdateStudent = can(currentActor, 'update', 'students');
   const canManagePortalAccounts = can(currentActor, 'create', 'studentAccounts');
   const canViewFinancialCols = can(currentActor, 'view', 'invoices');
+  const gamificationEnabled = isPlanFeatureEnabled(
+    centerSettings.currentPlanId,
+    'gamification',
+    centerSettings
+  );
 
   const [search, setSearch] = useState('');
   const [stageFilter, setStageFilter] = useState('all');
@@ -99,6 +117,12 @@ export const StudentsListScreen: React.FC = () => {
   const [bulkSlips, setBulkSlips] = useState<BulkPrintSlipItem[]>([]);
   const [mobileFilterOpen, setMobileFilterOpen] = useState(false);
   const [openMenuStudentId, setOpenMenuStudentId] = useState<string | null>(null);
+  const [leaderboardOpen, setLeaderboardOpen] = useState(false);
+
+  const leaderboardRows = useMemo(
+    () => computeLeaderboard(students, pointEntries),
+    [students, pointEntries]
+  );
 
   // Pagination
   const [page, setPage] = useState(1);
@@ -156,7 +180,7 @@ export const StudentsListScreen: React.FC = () => {
     <div className="space-y-5">
       {/* Top Toolbar */}
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Can action="create" resource="students">
             <Button onClick={openAddStudent} icon={<UserPlus className="w-4 h-4" />}>
               إضافة طالب
@@ -177,6 +201,13 @@ export const StudentsListScreen: React.FC = () => {
               تصدير Excel
             </Button>
           </Can>
+          <Button
+            variant="secondary"
+            icon={<Trophy className="w-4 h-4 text-[#B45309]" />}
+            onClick={() => setLeaderboardOpen(true)}
+          >
+            لوحة الشرف والنقاط
+          </Button>
         </div>
 
         <ListStateSwitcher mode={listStateMode} onChange={setListStateMode} />
@@ -883,6 +914,102 @@ export const StudentsListScreen: React.FC = () => {
           </div>
         </div>
       </Modal>
+
+      {/* Center Leaderboard Modal (Phase 10 Gamification) */}
+      <Modal
+        open={leaderboardOpen}
+        onClose={() => setLeaderboardOpen(false)}
+        maxWidth="max-w-2xl"
+        title="لوحة الشرف ونقاط تحفيز الطلاب"
+        footer={
+          <Button variant="secondary" onClick={() => setLeaderboardOpen(false)}>
+            إغلاق
+          </Button>
+        }
+      >
+        {!gamificationEnabled ? (
+          <div className="p-4 rounded-[12px] bg-[#FEF3C7]/60 border border-amber-200 space-y-3 text-center">
+            <Lock className="w-8 h-8 text-[#B45309] mx-auto" />
+            <h4 className="text-sm font-bold text-[#0F2A4A]">
+              نظام نقاط التحفيز غير مفعل في الباقة الحالية
+            </h4>
+            <p className="text-xs text-[#5B6B80]">
+              يمكن للمالك تفعيل ميزة «نقاط التحفيز ولوحة الشرف» مباشرة لهذه الباقة أو الترقية للباقة المتكاملة.
+            </p>
+            <div className="flex justify-center gap-2">
+              {currentRole === UserRole.OWNER && (
+                <Button
+                  size="sm"
+                  icon={<Sparkles className="w-4 h-4" />}
+                  onClick={() =>
+                    togglePlanFeatureOverride(centerSettings.currentPlanId, 'gamification', true)
+                  }
+                >
+                  تفعيل نقاط التحفيز الآن
+                </Button>
+              )}
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => {
+                  setLeaderboardOpen(false);
+                  navigate(ScreenId.SUBSCRIPTION);
+                }}
+              >
+                عرض الباقات
+              </Button>
+            </div>
+          </div>
+        ) : leaderboardRows.length === 0 ? (
+          <EmptyState
+            title="لا توجد نقاط تحفيز مسجلة بعد"
+            description="افتح ملف أي طالب واختر تبويب «النقاط والتحفيز» لمنح نقاط حضور أو تفوق."
+          />
+        ) : (
+          <div className="space-y-2.5 max-h-[60vh] overflow-y-auto">
+            {leaderboardRows.map((row) => (
+              <div
+                key={row.studentId}
+                className="p-3 rounded-[10px] border border-[#E2E8F0] bg-[#F8FAFC] flex flex-wrap items-center justify-between gap-2"
+              >
+                <div className="flex items-center gap-3">
+                  <span
+                    className={`w-8 h-8 rounded-full font-extrabold text-xs flex items-center justify-center tabular-nums ${
+                      row.rank === 1
+                        ? 'bg-amber-400 text-[#0F2A4A]'
+                        : row.rank === 2
+                        ? 'bg-slate-300 text-[#0F2A4A]'
+                        : 'bg-[#0F2A4A] text-white'
+                    }`}
+                  >
+                    #{row.rank}
+                  </span>
+                  <div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setLeaderboardOpen(false);
+                        setSelectedStudentId(row.studentId);
+                        navigate(ScreenId.STUDENT_PROFILE);
+                      }}
+                      className="text-sm font-bold text-[#0F2A4A] hover:text-[#0F766E] cursor-pointer"
+                    >
+                      {row.studentName}
+                    </button>
+                    <p className="text-[11px] text-[#5B6B80]">{row.stage}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <StatusChip tone={row.badgeTone} label={row.badgeTitle} />
+                  <span className="text-sm font-extrabold text-[#0F766E] tabular-nums">
+                    {formatNumber(row.totalPoints)} نقطة
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Modal>
     </div>
   );
 };
@@ -891,6 +1018,7 @@ export const StudentsListScreen: React.FC = () => {
 export const StudentProfileScreen: React.FC = () => {
   const {
     currentActor,
+    currentRole,
     selectedStudentId,
     students,
     groups,
@@ -898,6 +1026,7 @@ export const StudentProfileScreen: React.FC = () => {
     attendanceRecords,
     invoices,
     assessments,
+    pointEntries,
     centerSettings,
     studentPortalAvailable,
     consents,
@@ -911,6 +1040,8 @@ export const StudentProfileScreen: React.FC = () => {
     toggleStudentPortalAccountStatus,
     revokeAllStudentPortalSessions,
     revokeSingleStudentPortalSession,
+    awardStudentPoints,
+    togglePlanFeatureOverride,
     openLockedFeatureModal,
     openPdfExport,
     navigate,
@@ -921,9 +1052,13 @@ export const StudentProfileScreen: React.FC = () => {
   } = useEduflow();
 
   const [activeTab, setActiveTab] = useState<
-    'overview' | 'attendance' | 'payments' | 'assessments' | 'notes' | 'portal'
+    'overview' | 'attendance' | 'payments' | 'assessments' | 'notes' | 'points' | 'portal'
   >('overview');
   const [newNote, setNewNote] = useState('');
+  const [pointAmount, setPointAmount] = useState('10');
+  const [pointCategory, setPointCategory] =
+    useState<GamificationPointEntry['category']>('behavior');
+  const [pointReason, setPointReason] = useState('');
 
   // QR Card Modal
   const [qrModalOpen, setQrModalOpen] = useState(false);
@@ -948,6 +1083,12 @@ export const StudentProfileScreen: React.FC = () => {
   const canManageFaceTemplates = can(currentActor, 'create', 'faceTemplates');
   const canViewPortalTab = can(currentActor, 'view', 'studentAccounts');
   const canManagePortalAccounts = can(currentActor, 'create', 'studentAccounts');
+  const canAwardPoints = can(currentActor, 'create', 'pointEntries');
+  const profileGamificationEnabled = isPlanFeatureEnabled(
+    centerSettings.currentPlanId,
+    'gamification',
+    centerSettings
+  );
 
   const student = students.find((s) => s.id === selectedStudentId) || students[0];
 
@@ -1136,9 +1277,10 @@ export const StudentProfileScreen: React.FC = () => {
               ...(canViewFinancialTabs ? [{ id: 'payments' as const, label: 'المدفوعات' }] : []),
               { id: 'assessments', label: 'التقييمات' },
               { id: 'notes', label: `ملاحظات (${student.notes.length})` },
+              { id: 'points', label: 'النقاط والتحفيز' },
               ...(canViewPortalTab ? [{ id: 'portal' as const, label: 'حساب المنصة' }] : []),
             ] as readonly {
-              id: 'overview' | 'attendance' | 'payments' | 'assessments' | 'notes' | 'portal';
+              id: 'overview' | 'attendance' | 'payments' | 'assessments' | 'notes' | 'points' | 'portal';
               label: string;
             }[]
           ).map((t) => (
@@ -1686,6 +1828,161 @@ export const StudentProfileScreen: React.FC = () => {
           )}
         </Card>
       )}
+
+      {/* Tab: النقاط والتحفيز (Gamification) */}
+      {effectiveTab === 'points' && (() => {
+        const studentPointsList = pointEntries
+          .filter((p) => p.studentId === student.id)
+          .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        const totalPoints = computeStudentPointsTotal(pointEntries, student.id);
+        const badge = getPointsBadge(totalPoints);
+        const allRanks = computeLeaderboard(students, pointEntries);
+        const myRank = allRanks.find((r) => r.studentId === student.id)?.rank || '—';
+
+        return (
+          <div className="space-y-4">
+            {!profileGamificationEnabled ? (
+              <Card className="p-6 text-center space-y-3 border-amber-200 bg-[#FEF3C7]/40">
+                <Lock className="w-8 h-8 text-[#B45309] mx-auto" />
+                <h3 className="text-base font-bold text-[#0F2A4A]">
+                  ميزة النقاط والتحفيز مغلقة في الباقة الحالية
+                </h3>
+                <p className="text-xs text-[#5B6B80]">
+                  يمكن للمالك تفعيل ميزة نقاط التحفيز ولوحة الشرف من الزر التالي لتسجيل نقاط الطالب.
+                </p>
+                {currentRole === UserRole.OWNER && (
+                  <Button
+                    size="sm"
+                    icon={<Sparkles className="w-4 h-4" />}
+                    onClick={() =>
+                      togglePlanFeatureOverride(centerSettings.currentPlanId, 'gamification', true)
+                    }
+                  >
+                    تفعيل النقاط والتحفيز الآن
+                  </Button>
+                )}
+              </Card>
+            ) : (
+              <>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <Card className="p-4">
+                    <span className="text-xs text-[#5B6B80]">إجمالي نقاط الطالب</span>
+                    <span className="text-2xl font-extrabold text-[#0F766E] tabular-nums block mt-1">
+                      {formatNumber(totalPoints)} نقطة
+                    </span>
+                  </Card>
+                  <Card className="p-4">
+                    <span className="text-xs text-[#5B6B80]">الوسام الحالي</span>
+                    <div className="mt-2">
+                      <StatusChip tone={badge.tone} label={badge.title} />
+                    </div>
+                  </Card>
+                  <Card className="p-4">
+                    <span className="text-xs text-[#5B6B80]">الترتيب بالسنتر</span>
+                    <span className="text-2xl font-extrabold text-[#0F2A4A] tabular-nums block mt-1">
+                      #{myRank}
+                    </span>
+                  </Card>
+                </div>
+
+                {canAwardPoints && (
+                  <Card className="p-5">
+                    <h4 className="text-sm font-bold text-[#0F2A4A] mb-3 flex items-center gap-2">
+                      <Award className="w-4 h-4 text-[#0F766E]" />
+                      <span>منح / تعديل نقاط تحفيزية</span>
+                    </h4>
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        const pts = Number(pointAmount) || 0;
+                        if (!pts || !pointReason.trim()) return;
+                        awardStudentPoints({
+                          studentId: student.id,
+                          points: pts,
+                          category: pointCategory,
+                          reason: pointReason.trim(),
+                        });
+                        setPointReason('');
+                      }}
+                      className="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end"
+                    >
+                      <Field label="عدد النقاط" htmlFor="pt-val" required>
+                        <TextInput
+                          id="pt-val"
+                          type="number"
+                          value={pointAmount}
+                          onChange={(e) => setPointAmount(e.target.value)}
+                          className="tabular-nums"
+                          required
+                        />
+                      </Field>
+                      <Field label="الفئة" htmlFor="pt-cat">
+                        <SelectInput
+                          id="pt-cat"
+                          value={pointCategory}
+                          onChange={(e) =>
+                            setPointCategory(e.target.value as GamificationPointEntry['category'])
+                          }
+                        >
+                          <option value="behavior">تفوق ومشاركة وسلوك</option>
+                          <option value="attendance">التزام بالحضور</option>
+                          <option value="exam">درجة امتحان</option>
+                          <option value="assignment">إنجاز الواجب</option>
+                          <option value="bonus">مكافأة خاصة</option>
+                        </SelectInput>
+                      </Field>
+                      <Field label="السبب" htmlFor="pt-reason" required>
+                        <TextInput
+                          id="pt-reason"
+                          placeholder="مثال: حل ممتاز في الحصة..."
+                          value={pointReason}
+                          onChange={(e) => setPointReason(e.target.value)}
+                          required
+                        />
+                      </Field>
+                      <Button type="submit" icon={<Plus className="w-4 h-4" />}>
+                        إضافة النقاط
+                      </Button>
+                    </form>
+                  </Card>
+                )}
+
+                <Card className="p-5 space-y-3">
+                  <h4 className="text-sm font-bold text-[#0F2A4A]">
+                    سجل النقاط ({studentPointsList.length})
+                  </h4>
+                  {studentPointsList.length === 0 ? (
+                    <EmptyState
+                      title="لا توجد نقاط مسجلة بعد"
+                      description="ستظهر هنا كل النقاط الممنوحة للطالب مع التاريخ والسبب."
+                    />
+                  ) : (
+                    <div className="space-y-2">
+                      {studentPointsList.map((pt) => (
+                        <div
+                          key={pt.id}
+                          className="p-3 rounded-[10px] bg-[#F4F7FA] border border-[#E2E8F0] flex flex-wrap items-center justify-between gap-2 text-xs"
+                        >
+                          <div>
+                            <p className="font-bold text-[#0F2A4A]">{pt.reason}</p>
+                            <p className="text-[11px] text-[#5B6B80] mt-0.5 tabular-nums">
+                              بواسطة: {pt.awardedBy} · {formatDateDDMMYYYY(new Date(pt.createdAt))}
+                            </p>
+                          </div>
+                          <StatusChip
+                            tone={pt.points >= 0 ? 'success' : 'danger'}
+                            label={`${pt.points >= 0 ? '+' : ''}${pt.points} نقطة`}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </Card>
+              </>
+            )}
+          </div>
+        );
+      })()}
 
       {/* Student QR Card Modal (Phase 9) */}
       <Modal

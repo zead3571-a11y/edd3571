@@ -42,6 +42,7 @@ import {
   paymentStatusChipProps,
 } from '../ui/Primitives';
 import {
+  formatDateDDMMYYYY,
   formatEGP,
   getOverdueBucket,
 } from '../../utils/eduflowLogic';
@@ -56,13 +57,15 @@ import {
   buildWhatsAppUrl,
 } from '../../features/messaging/whatsappService';
 
-// Shared Finance Sub-Nav (Payments #12, Late Payments #14, Expenses #15)
-const FinanceSubNav: React.FC<{ active: ScreenId }> = ({ active }) => {
+// Shared Finance Sub-Nav (Payments, Late Payments, Expenses, Cash Register, Installments)
+export const FinanceSubNav: React.FC<{ active: ScreenId }> = ({ active }) => {
   const { currentActor, navigate } = useEduflow();
   const items = [
     { id: ScreenId.PAYMENTS, label: 'الفواتير والدفعات' },
     { id: ScreenId.LATE_PAYMENTS, label: 'المتأخرون في الدفع' },
     { id: ScreenId.EXPENSES, label: 'المصروفات' },
+    { id: ScreenId.CASH_REGISTER, label: 'الخزنة واليومية' },
+    { id: ScreenId.INSTALLMENTS, label: 'خطط التقسيط' },
   ].filter((t) =>
     t.id === ScreenId.LATE_PAYMENTS
       ? can(currentActor, 'view', 'financialReports')
@@ -70,13 +73,13 @@ const FinanceSubNav: React.FC<{ active: ScreenId }> = ({ active }) => {
   );
 
   return (
-    <div className="inline-flex items-center gap-1 p-1 bg-white border border-[#E2E8F0] rounded-[8px]">
+    <div className="inline-flex flex-wrap items-center gap-1 p-1 bg-white border border-[#E2E8F0] rounded-[8px]">
       {items.map((t) => (
         <button
           key={t.id}
           type="button"
           onClick={() => navigate(t.id)}
-          className={`px-3.5 py-2 rounded-[6px] text-xs font-bold cursor-pointer transition-colors ${
+          className={`px-3.5 py-2 rounded-[6px] text-xs font-bold whitespace-nowrap cursor-pointer transition-colors ${
             active === t.id
               ? 'bg-[#0F2A4A] text-white'
               : 'text-[#5B6B80] hover:text-[#0F2A4A]'
@@ -823,13 +826,17 @@ export const PaymentsScreen: React.FC = () => {
 // 14) Late Payments Screen
 export const LatePaymentsScreen: React.FC = () => {
   const {
+    currentActor,
     invoices,
     students,
     groups,
     templates,
+    centerSettings,
     openRecordPayment,
     queueWhatsAppMessages,
     markOutboxMessageSent,
+    runAutoPaymentReminders,
+    navigate,
     showToast,
   } = useEduflow();
 
@@ -840,6 +847,7 @@ export const LatePaymentsScreen: React.FC = () => {
     { msg: OutboxMessage; invoiceId: string }[]
   >([]);
   const [allUpToDateDemo, setAllUpToDateDemo] = useState(false);
+  const [runningAutoReminders, setRunningAutoReminders] = useState(false);
 
   const overdueInvoices = useMemo(
     () => invoices.filter((inv) => inv.status === 'overdue' && inv.total > inv.paid),
@@ -861,6 +869,18 @@ export const LatePaymentsScreen: React.FC = () => {
     templates.find((t) => t.id === 'late_payment')?.body ||
     'ولي أمر الطالب {اسم_الطالب}، يوجد مبلغ مستحق {المبلغ} ج.';
 
+  const autoRule = centerSettings.autoReminderRule;
+  const canSendWhatsapp = can(currentActor, 'send_whatsapp', 'messages');
+
+  const handleRunAutoReminders = async () => {
+    setRunningAutoReminders(true);
+    try {
+      await runAutoPaymentReminders(true);
+    } finally {
+      setRunningAutoReminders(false);
+    }
+  };
+
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -873,6 +893,47 @@ export const LatePaymentsScreen: React.FC = () => {
           {allUpToDateDemo ? 'عرض المتأخرين الفعليين' : 'معاينة حالة التزام جميع الطلاب'}
         </button>
       </div>
+
+      {/* Auto Payment Reminders Status & Manual Trigger */}
+      <Card className="p-4 flex flex-wrap items-center justify-between gap-3 bg-[#F0FDFA]/60 border-[#CCFBF1]">
+        <div className="space-y-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm font-bold text-[#0F2A4A]">
+              تذكيرات الدفع التلقائية
+            </span>
+            <StatusChip
+              tone={autoRule?.enabled ? 'success' : 'neutral'}
+              label={autoRule?.enabled ? 'قاعدة تلقائية مفعّلة' : 'تذكيرات يدوية'}
+            />
+          </div>
+          <p className="text-xs text-[#5B6B80] tabular-nums">
+            إرسال تذكير بعد تأخير {autoRule?.daysOverdueThreshold ?? 3} أيام فأكثر عبر{' '}
+            {autoRule?.channel === 'cloud_api' ? 'WhatsApp Cloud API' : 'قائمة الإرسال'}
+            {autoRule?.lastRunAt
+              ? ` · آخر تشغيل: ${formatDateDDMMYYYY(autoRule.lastRunAt)}`
+              : ''}
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => navigate(ScreenId.SETTINGS)}
+          >
+            ضبط القاعدة
+          </Button>
+          {canSendWhatsapp && (
+            <Button
+              size="sm"
+              variant="primary"
+              loading={runningAutoReminders}
+              onClick={handleRunAutoReminders}
+            >
+              تشغيل التذكيرات التلقائية الآن
+            </Button>
+          )}
+        </div>
+      </Card>
 
       {/* Summary Header */}
       <Card className="p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-[#FEE2E2]/35 border-red-200">

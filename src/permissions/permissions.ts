@@ -78,7 +78,21 @@ export type PermissionResource =
   | 'fileAssets'
   | 'designSystem'
   | 'guardians'
-  | 'studentGuardians';
+  | 'studentGuardians'
+  | 'lessons'
+  | 'onlineExams'
+  | 'examAttempts'
+  | 'assignments'
+  | 'assignmentSubmissions'
+  | 'cashShifts'
+  | 'inventoryItems'
+  | 'inventoryTransactions'
+  | 'leads'
+  | 'staffAttendance'
+  | 'staffPayrolls'
+  | 'installmentPlans'
+  | 'pointEntries'
+  | 'aiAssistant';
 
 export interface PermissionActor {
   userId?: string;
@@ -168,6 +182,20 @@ const RESOURCE_LABELS_AR: Record<PermissionResource, string> = {
   designSystem: 'نظام التصميم',
   guardians: 'أولياء الأمور',
   studentGuardians: 'روابط الطلاب بأولياء الأمور',
+  lessons: 'الدروس والبث المباشر',
+  onlineExams: 'الامتحانات الأونلاين',
+  examAttempts: 'محاولات الامتحانات',
+  assignments: 'الواجبات الإلكترونية',
+  assignmentSubmissions: 'تسليمات الواجبات',
+  cashShifts: 'الخزنة وتقفيل اليومية',
+  inventoryItems: 'أصناف المذكرات والمخزون',
+  inventoryTransactions: 'حركات المخزون والمذكرات',
+  leads: 'التسجيل الأونلاين والعملاء المحتملون',
+  staffAttendance: 'حضور وانصراف الموظفين',
+  staffPayrolls: 'مرتبات الموظفين',
+  installmentPlans: 'خطط التقسيط',
+  pointEntries: 'نقاط التحفيز ولوحة الشرف',
+  aiAssistant: 'المساعد الذكي AI',
 };
 
 export class PermissionError extends Error {
@@ -301,7 +329,12 @@ export function can(
       resource === 'settlements' ||
       resource === 'financialReports' ||
       resource === 'reports' ||
-      resource === 'teacherShares'
+      resource === 'teacherShares' ||
+      resource === 'cashShifts' ||
+      resource === 'installmentPlans' ||
+      resource === 'staffPayrolls' ||
+      resource === 'inventoryItems' ||
+      resource === 'inventoryTransactions'
     ) {
       return ['view', 'create', 'update', 'delete', 'export', 'print', 'settle'].includes(
         action
@@ -333,11 +366,17 @@ export function can(
       resource === 'rooms' ||
       resource === 'stages' ||
       resource === 'notifications' ||
+      resource === 'leads' ||
+      resource === 'staffAttendance' ||
+      resource === 'pointEntries' ||
       resource === 'designSystem'
     ) {
       return action === 'view' || action === 'print';
     }
     if (resource === 'activityLog') {
+      return action === 'view' || action === 'create';
+    }
+    if (resource === 'aiAssistant') {
       return action === 'view' || action === 'create';
     }
     return false;
@@ -385,6 +424,18 @@ export function can(
     }
     if (resource === 'studentSessions') {
       return ['view', 'update', 'delete'].includes(action);
+    }
+    if (resource === 'leads' || resource === 'inventoryTransactions' || resource === 'cashShifts') {
+      return ['view', 'create', 'update', 'print'].includes(action);
+    }
+    if (resource === 'inventoryItems' || resource === 'installmentPlans') {
+      return ['view', 'update', 'print'].includes(action);
+    }
+    if (resource === 'staffAttendance') {
+      return ['view', 'create', 'update'].includes(action);
+    }
+    if (resource === 'pointEntries') {
+      return ['view', 'create'].includes(action);
     }
     if (resource === 'fileAssets') {
       return ['view', 'create'].includes(action);
@@ -463,6 +514,33 @@ export function can(
       }
       return true;
     }
+    if (
+      resource === 'lessons' ||
+      resource === 'onlineExams' ||
+      resource === 'assignments' ||
+      resource === 'assignmentSubmissions'
+    ) {
+      if (!['view', 'create', 'update', 'delete', 'enter_assessments'].includes(action)) {
+        return false;
+      }
+      if (context?.groupTeacherId) {
+        return context.groupTeacherId === actor.teacherId;
+      }
+      if (context?.groupId && context.groups) {
+        const g = context.groups.find((gr) => gr.id === context.groupId);
+        return Boolean(g && g.teacherId === actor.teacherId);
+      }
+      return true;
+    }
+    if (resource === 'examAttempts') {
+      return action === 'view';
+    }
+    if (resource === 'pointEntries') {
+      return ['view', 'create'].includes(action);
+    }
+    if (resource === 'aiAssistant') {
+      return ['view', 'create'].includes(action);
+    }
     if (resource === 'fileAssets') {
       return ['view', 'create'].includes(action);
     }
@@ -498,8 +576,16 @@ export function can(
       resource === 'invoices' ||
       resource === 'payments' ||
       resource === 'groups' ||
-      resource === 'sessions'
+      resource === 'sessions' ||
+      resource === 'lessons' ||
+      resource === 'assignments' ||
+      resource === 'assignmentSubmissions' ||
+      resource === 'installmentPlans' ||
+      resource === 'pointEntries'
     ) {
+      if (action === 'create' && resource === 'payments') {
+        return isParentChildMatch(actor, context);
+      }
       if (action !== 'view' && action !== 'print') return false;
       if (
         context?.parentPhone ||
@@ -511,14 +597,17 @@ export function can(
       }
       return true;
     }
+    if (resource === 'webhookEvents') {
+      return action === 'create';
+    }
     if (resource === 'activityLog') {
       return action === 'create';
     }
     return false;
   }
 
-  // Student: reads ONLY own groups, sessions, attendance, assessments/results, and invoice summary;
-  // manages ONLY own active device sessions; NEVER reads other students, teachers, finance totals, or settings.
+  // Student: reads ONLY own groups, sessions, attendance, assessments/results, lessons, exams, assignments, and points;
+  // creates own exam attempts and assignment submissions; manages ONLY own active device sessions.
   if (role === UserRole.STUDENT) {
     if (resource === 'studentPortal') {
       return action === 'view';
@@ -544,9 +633,22 @@ export function can(
     if (
       resource === 'groups' ||
       resource === 'sessions' ||
-      resource === 'assessments'
+      resource === 'assessments' ||
+      resource === 'lessons' ||
+      resource === 'onlineExams' ||
+      resource === 'assignments' ||
+      resource === 'pointEntries'
     ) {
       return action === 'view';
+    }
+    if (resource === 'examAttempts' || resource === 'assignmentSubmissions') {
+      if (action === 'view' || action === 'create' || action === 'update') {
+        if (context?.studentId) {
+          return context.studentId === actor.studentId;
+        }
+        return true;
+      }
+      return false;
     }
     if (resource === 'activityLog') {
       return action === 'create';
@@ -578,7 +680,8 @@ export function canAccessScreen(
     screenId === ScreenId.LANDING ||
     screenId === ScreenId.LOGIN ||
     screenId === ScreenId.ONBOARDING ||
-    screenId === ScreenId.STUDENT_LOGIN
+    screenId === ScreenId.STUDENT_LOGIN ||
+    screenId === ScreenId.ONLINE_REGISTRATION
   ) {
     if (actor?.role === UserRole.STUDENT && screenId !== ScreenId.STUDENT_LOGIN) {
       return false;
@@ -629,6 +732,18 @@ export function canAccessScreen(
       return can(actor, 'view', 'payments') || can(actor, 'view', 'invoices');
     case ScreenId.EXPENSES:
       return can(actor, 'view', 'expenses');
+    case ScreenId.CASH_REGISTER:
+      return can(actor, 'view', 'cashShifts');
+    case ScreenId.INSTALLMENTS:
+      return can(actor, 'view', 'installmentPlans');
+    case ScreenId.INVENTORY:
+      return can(actor, 'view', 'inventoryItems');
+    case ScreenId.REGISTRATION_CRM:
+      return can(actor, 'view', 'leads');
+    case ScreenId.STAFF_PAYROLL:
+      return can(actor, 'view', 'staffAttendance') || can(actor, 'view', 'staffPayrolls');
+    case ScreenId.AI_ASSISTANT:
+      return can(actor, 'view', 'aiAssistant');
     case ScreenId.ASSESSMENTS:
       return can(actor, 'view', 'assessments');
     case ScreenId.NOTIFICATIONS:

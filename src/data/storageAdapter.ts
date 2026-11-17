@@ -2,8 +2,11 @@ import {
   ActivityLogEntry,
   AppNotification,
   Assessment,
+  Assignment,
+  AssignmentSubmission,
   AttendanceRecord,
   AttendanceSession,
+  CashRegisterShift,
   Center,
   CenterSettings,
   ConsentRecord,
@@ -11,15 +14,25 @@ import {
   Expense,
   FaceTemplateRecord,
   FileAssetRecord,
+  GamificationPointEntry,
   Group,
   Guardian,
+  InstallmentPlan,
+  InventoryItem,
+  InventoryTransaction,
   Invoice,
+  LessonItem,
   MessageTemplate,
+  OnlineExam,
+  OnlineExamAttempt,
   OutboxMessage,
   PaymentRecord,
+  RegistrationLead,
   Room,
   ScheduledJobRunRecord,
   SettlementRecord,
+  StaffAttendanceRecord,
+  StaffPayrollRecord,
   Student,
   StudentDeviceSession,
   StudentGuardianLink,
@@ -32,24 +45,37 @@ import {
   DEFAULT_CENTER_ID,
   INITIAL_ACTIVITY_LOG,
   INITIAL_ASSESSMENTS,
+  INITIAL_ASSIGNMENTS,
+  INITIAL_ASSIGNMENT_SUBMISSIONS,
   INITIAL_ATTENDANCE_RECORDS,
+  INITIAL_CASH_SHIFTS,
   INITIAL_CENTERS,
   INITIAL_CENTER_SETTINGS,
   INITIAL_CONSENTS,
   INITIAL_DISCOUNTS,
+  INITIAL_EXAM_ATTEMPTS,
   INITIAL_EXPENSES,
   INITIAL_FACE_TEMPLATES,
   INITIAL_FILE_ASSETS,
   INITIAL_GROUPS,
   INITIAL_GUARDIANS,
+  INITIAL_INSTALLMENT_PLANS,
+  INITIAL_INVENTORY_ITEMS,
+  INITIAL_INVENTORY_TRANSACTIONS,
   INITIAL_INVOICES,
+  INITIAL_LEADS,
+  INITIAL_LESSONS,
   INITIAL_MESSAGES,
   INITIAL_NOTIFICATIONS,
+  INITIAL_ONLINE_EXAMS,
   INITIAL_PAYMENTS,
+  INITIAL_POINT_ENTRIES,
   INITIAL_ROOMS,
   INITIAL_SCHEDULED_JOB_RUNS,
   INITIAL_SESSIONS,
   INITIAL_SETTLEMENTS,
+  INITIAL_STAFF_ATTENDANCE,
+  INITIAL_STAFF_PAYROLLS,
   INITIAL_STUDENTS,
   INITIAL_STUDENT_ACCOUNTS,
   INITIAL_STUDENT_GUARDIANS,
@@ -61,7 +87,7 @@ import {
   STAGES_LIST,
 } from './seedData';
 
-export const CURRENT_SCHEMA_VERSION = 2;
+export const CURRENT_SCHEMA_VERSION = 3;
 
 export type EntityKey =
   | 'centers'
@@ -89,7 +115,20 @@ export type EntityKey =
   | 'studentSessions'
   | 'webhookEvents'
   | 'scheduledJobRuns'
-  | 'fileAssets';
+  | 'fileAssets'
+  | 'lessons'
+  | 'onlineExams'
+  | 'examAttempts'
+  | 'assignments'
+  | 'assignmentSubmissions'
+  | 'cashShifts'
+  | 'inventoryItems'
+  | 'inventoryTransactions'
+  | 'leads'
+  | 'staffAttendance'
+  | 'staffPayrolls'
+  | 'installmentPlans'
+  | 'pointEntries';
 
 export interface EntityCollectionsMap {
   centers: Center[];
@@ -118,6 +157,19 @@ export interface EntityCollectionsMap {
   webhookEvents: WebhookEventRecord[];
   scheduledJobRuns: ScheduledJobRunRecord[];
   fileAssets: FileAssetRecord[];
+  lessons: LessonItem[];
+  onlineExams: OnlineExam[];
+  examAttempts: OnlineExamAttempt[];
+  assignments: Assignment[];
+  assignmentSubmissions: AssignmentSubmission[];
+  cashShifts: CashRegisterShift[];
+  inventoryItems: InventoryItem[];
+  inventoryTransactions: InventoryTransaction[];
+  leads: RegistrationLead[];
+  staffAttendance: StaffAttendanceRecord[];
+  staffPayrolls: StaffPayrollRecord[];
+  installmentPlans: InstallmentPlan[];
+  pointEntries: GamificationPointEntry[];
 }
 
 export interface EduflowMetaMap {
@@ -162,6 +214,19 @@ export const ALL_ENTITY_KEYS: EntityKey[] = [
   'webhookEvents',
   'scheduledJobRuns',
   'fileAssets',
+  'lessons',
+  'onlineExams',
+  'examAttempts',
+  'assignments',
+  'assignmentSubmissions',
+  'cashShifts',
+  'inventoryItems',
+  'inventoryTransactions',
+  'leads',
+  'staffAttendance',
+  'staffPayrolls',
+  'installmentPlans',
+  'pointEntries',
 ];
 
 function deepClone<T>(val: T): T {
@@ -196,6 +261,19 @@ export function createInitialCollections(): EntityCollectionsMap {
     webhookEvents: INITIAL_WEBHOOK_EVENTS,
     scheduledJobRuns: INITIAL_SCHEDULED_JOB_RUNS,
     fileAssets: INITIAL_FILE_ASSETS,
+    lessons: INITIAL_LESSONS,
+    onlineExams: INITIAL_ONLINE_EXAMS,
+    examAttempts: INITIAL_EXAM_ATTEMPTS,
+    assignments: INITIAL_ASSIGNMENTS,
+    assignmentSubmissions: INITIAL_ASSIGNMENT_SUBMISSIONS,
+    cashShifts: INITIAL_CASH_SHIFTS,
+    inventoryItems: INITIAL_INVENTORY_ITEMS,
+    inventoryTransactions: INITIAL_INVENTORY_TRANSACTIONS,
+    leads: INITIAL_LEADS,
+    staffAttendance: INITIAL_STAFF_ATTENDANCE,
+    staffPayrolls: INITIAL_STAFF_PAYROLLS,
+    installmentPlans: INITIAL_INSTALLMENT_PLANS,
+    pointEntries: INITIAL_POINT_ENTRIES,
   });
 }
 
@@ -285,6 +363,41 @@ export function migrateSnapshot(
     fileAssets: Array.isArray(rawCollections.fileAssets)
       ? rawCollections.fileAssets
       : defaults.fileAssets,
+    lessons: Array.isArray(rawCollections.lessons) ? rawCollections.lessons : defaults.lessons,
+    onlineExams: Array.isArray(rawCollections.onlineExams)
+      ? rawCollections.onlineExams
+      : defaults.onlineExams,
+    examAttempts: Array.isArray(rawCollections.examAttempts)
+      ? rawCollections.examAttempts
+      : defaults.examAttempts,
+    assignments: Array.isArray(rawCollections.assignments)
+      ? rawCollections.assignments
+      : defaults.assignments,
+    assignmentSubmissions: Array.isArray(rawCollections.assignmentSubmissions)
+      ? rawCollections.assignmentSubmissions
+      : defaults.assignmentSubmissions,
+    cashShifts: Array.isArray(rawCollections.cashShifts)
+      ? rawCollections.cashShifts
+      : defaults.cashShifts,
+    inventoryItems: Array.isArray(rawCollections.inventoryItems)
+      ? rawCollections.inventoryItems
+      : defaults.inventoryItems,
+    inventoryTransactions: Array.isArray(rawCollections.inventoryTransactions)
+      ? rawCollections.inventoryTransactions
+      : defaults.inventoryTransactions,
+    leads: Array.isArray(rawCollections.leads) ? rawCollections.leads : defaults.leads,
+    staffAttendance: Array.isArray(rawCollections.staffAttendance)
+      ? rawCollections.staffAttendance
+      : defaults.staffAttendance,
+    staffPayrolls: Array.isArray(rawCollections.staffPayrolls)
+      ? rawCollections.staffPayrolls
+      : defaults.staffPayrolls,
+    installmentPlans: Array.isArray(rawCollections.installmentPlans)
+      ? rawCollections.installmentPlans
+      : defaults.installmentPlans,
+    pointEntries: Array.isArray(rawCollections.pointEntries)
+      ? rawCollections.pointEntries
+      : defaults.pointEntries,
   };
 
   if (fromVersion <= CURRENT_SCHEMA_VERSION) {

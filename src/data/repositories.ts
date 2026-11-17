@@ -2,8 +2,11 @@ import {
   ActivityLogEntry,
   AppNotification,
   Assessment,
+  Assignment,
+  AssignmentSubmission,
   AttendanceRecord,
   AttendanceSession,
+  CashRegisterShift,
   Center,
   CenterSettings,
   ConsentRecord,
@@ -11,15 +14,25 @@ import {
   Expense,
   FaceTemplateRecord,
   FileAssetRecord,
+  GamificationPointEntry,
   Group,
   Guardian,
+  InstallmentPlan,
+  InventoryItem,
+  InventoryTransaction,
   Invoice,
+  LessonItem,
   MessageTemplate,
+  OnlineExam,
+  OnlineExamAttempt,
   OutboxMessage,
   PaymentRecord,
+  RegistrationLead,
   Room,
   ScheduledJobRunRecord,
   SettlementRecord,
+  StaffAttendanceRecord,
+  StaffPayrollRecord,
   Student,
   StudentDeviceSession,
   StudentGuardianLink,
@@ -148,6 +161,19 @@ const ENTITY_TO_RESOURCE: Record<EntityKey, PermissionResource> = {
   webhookEvents: 'webhookEvents',
   scheduledJobRuns: 'scheduledJobs',
   fileAssets: 'fileAssets',
+  lessons: 'lessons',
+  onlineExams: 'onlineExams',
+  examAttempts: 'examAttempts',
+  assignments: 'assignments',
+  assignmentSubmissions: 'assignmentSubmissions',
+  cashShifts: 'cashShifts',
+  inventoryItems: 'inventoryItems',
+  inventoryTransactions: 'inventoryTransactions',
+  leads: 'leads',
+  staffAttendance: 'staffAttendance',
+  staffPayrolls: 'staffPayrolls',
+  installmentPlans: 'installmentPlans',
+  pointEntries: 'pointEntries',
 };
 
 function buildPermissionContextForItem(
@@ -187,7 +213,13 @@ function buildPermissionContextForItem(
   } else if (entityKey === 'studentGuardians') {
     ctx.guardianId = rec.guardianId as string | undefined;
     ctx.studentId = rec.studentId as string | undefined;
-  } else if (entityKey === 'sessions' || entityKey === 'assessments') {
+  } else if (
+    entityKey === 'sessions' ||
+    entityKey === 'assessments' ||
+    entityKey === 'lessons' ||
+    entityKey === 'onlineExams' ||
+    entityKey === 'assignments'
+  ) {
     const groupId = rec.groupId as string | undefined;
     ctx.groupId = groupId;
     if (groupId) {
@@ -205,7 +237,15 @@ function buildPermissionContextForItem(
     ctx.teacherId = rec.teacherId as string | undefined;
   } else if (entityKey === 'users') {
     ctx.targetUserRole = rec.role as UserRole | undefined;
-  } else if (entityKey === 'studentAccounts' || entityKey === 'studentSessions') {
+  } else if (
+    entityKey === 'studentAccounts' ||
+    entityKey === 'studentSessions' ||
+    entityKey === 'examAttempts' ||
+    entityKey === 'assignmentSubmissions' ||
+    entityKey === 'installmentPlans' ||
+    entityKey === 'pointEntries' ||
+    entityKey === 'payments'
+  ) {
     ctx.studentId = rec.studentId as string | undefined;
   }
 
@@ -279,9 +319,34 @@ function filterItemsForActor<T>(
         teacherSessionIds.has((r as unknown as AttendanceRecord).sessionId)
       );
     }
-    if (entityKey === 'assessments') {
+    if (
+      entityKey === 'assessments' ||
+      entityKey === 'lessons' ||
+      entityKey === 'onlineExams' ||
+      entityKey === 'assignments'
+    ) {
       return items.filter((a) =>
-        teacherGroupIds.has((a as unknown as Assessment).groupId)
+        teacherGroupIds.has((a as unknown as { groupId: string }).groupId)
+      );
+    }
+    if (entityKey === 'examAttempts') {
+      const ownExamIds = new Set(
+        adapter
+          .getCollection('onlineExams')
+          .filter((e) => teacherGroupIds.has(e.groupId))
+          .map((e) => e.id)
+      );
+      return items.filter((a) => ownExamIds.has((a as unknown as OnlineExamAttempt).examId));
+    }
+    if (entityKey === 'assignmentSubmissions') {
+      const ownAssignmentIds = new Set(
+        adapter
+          .getCollection('assignments')
+          .filter((a) => teacherGroupIds.has(a.groupId))
+          .map((a) => a.id)
+      );
+      return items.filter((s) =>
+        ownAssignmentIds.has((s as unknown as AssignmentSubmission).assignmentId)
       );
     }
     if (entityKey === 'settlements') {
@@ -364,6 +429,12 @@ function filterItemsForActor<T>(
     if (entityKey === 'users') {
       return items.filter((u) => (u as unknown as SystemUser).id === actor.userId);
     }
+    if (entityKey === 'lessons' || entityKey === 'assignments') {
+      return items.filter((i) => childGroupIds.has((i as unknown as { groupId: string }).groupId));
+    }
+    if (entityKey === 'assignmentSubmissions' || entityKey === 'installmentPlans' || entityKey === 'pointEntries') {
+      return items.filter((i) => childIds.has((i as unknown as { studentId: string }).studentId));
+    }
     return [];
   }
 
@@ -400,6 +471,28 @@ function filterItemsForActor<T>(
             grades: ass.grades.filter((g) => g.studentId === sid),
           } as unknown as T;
         });
+    }
+    if (entityKey === 'lessons') {
+      return items.filter((l) => {
+        const lesson = l as unknown as LessonItem;
+        return lesson.published && myGroupIds.has(lesson.groupId);
+      });
+    }
+    if (entityKey === 'onlineExams') {
+      return items.filter((e) => {
+        const exam = e as unknown as OnlineExam;
+        return exam.published && myGroupIds.has(exam.groupId);
+      });
+    }
+    if (entityKey === 'assignments') {
+      return items.filter((a) => myGroupIds.has((a as unknown as Assignment).groupId));
+    }
+    if (entityKey === 'examAttempts' || entityKey === 'assignmentSubmissions') {
+      return items.filter((i) => (i as unknown as { studentId: string }).studentId === sid);
+    }
+    if (entityKey === 'pointEntries') {
+      // Allow students to see all point entries to render center leaderboard totals cleanly (names resolved from students or entry)
+      return items;
     }
     if (entityKey === 'studentSessions') {
       return items.filter((s) => (s as unknown as StudentDeviceSession).studentId === sid);
@@ -555,6 +648,19 @@ export interface EduflowRepositories {
   webhookEvents: Repository<WebhookEventRecord>;
   scheduledJobRuns: Repository<ScheduledJobRunRecord>;
   fileAssets: Repository<FileAssetRecord>;
+  lessons: Repository<LessonItem>;
+  onlineExams: Repository<OnlineExam>;
+  examAttempts: Repository<OnlineExamAttempt>;
+  assignments: Repository<Assignment>;
+  assignmentSubmissions: Repository<AssignmentSubmission>;
+  cashShifts: Repository<CashRegisterShift>;
+  inventoryItems: Repository<InventoryItem>;
+  inventoryTransactions: Repository<InventoryTransaction>;
+  leads: Repository<RegistrationLead>;
+  staffAttendance: Repository<StaffAttendanceRecord>;
+  staffPayrolls: Repository<StaffPayrollRecord>;
+  installmentPlans: Repository<InstallmentPlan>;
+  pointEntries: Repository<GamificationPointEntry>;
   meta: {
     getStages(): string[];
     setStages(stages: string[]): void;
@@ -812,6 +918,97 @@ export function createRepositories(
       adapter,
       'fileAssets',
       'file',
+      undefined,
+      options
+    ),
+    lessons: createEntityRepository<'lessons', LessonItem>(
+      adapter,
+      'lessons',
+      'lsn',
+      undefined,
+      options
+    ),
+    onlineExams: createEntityRepository<'onlineExams', OnlineExam>(
+      adapter,
+      'onlineExams',
+      'exm',
+      undefined,
+      options
+    ),
+    examAttempts: createEntityRepository<'examAttempts', OnlineExamAttempt>(
+      adapter,
+      'examAttempts',
+      'exa',
+      undefined,
+      options
+    ),
+    assignments: createEntityRepository<'assignments', Assignment>(
+      adapter,
+      'assignments',
+      'asg',
+      undefined,
+      options
+    ),
+    assignmentSubmissions: createEntityRepository<'assignmentSubmissions', AssignmentSubmission>(
+      adapter,
+      'assignmentSubmissions',
+      'asub',
+      undefined,
+      options
+    ),
+    cashShifts: createEntityRepository<'cashShifts', CashRegisterShift>(
+      adapter,
+      'cashShifts',
+      'csh',
+      undefined,
+      options
+    ),
+    inventoryItems: createEntityRepository<'inventoryItems', InventoryItem>(
+      adapter,
+      'inventoryItems',
+      'invt',
+      undefined,
+      options
+    ),
+    inventoryTransactions: createEntityRepository<'inventoryTransactions', InventoryTransaction>(
+      adapter,
+      'inventoryTransactions',
+      'invx',
+      undefined,
+      options
+    ),
+    leads: createEntityRepository<'leads', RegistrationLead>(
+      adapter,
+      'leads',
+      'lead',
+      undefined,
+      options
+    ),
+    staffAttendance: createEntityRepository<'staffAttendance', StaffAttendanceRecord>(
+      adapter,
+      'staffAttendance',
+      'satt',
+      undefined,
+      options
+    ),
+    staffPayrolls: createEntityRepository<'staffPayrolls', StaffPayrollRecord>(
+      adapter,
+      'staffPayrolls',
+      'spay',
+      undefined,
+      options
+    ),
+    installmentPlans: createEntityRepository<'installmentPlans', InstallmentPlan>(
+      adapter,
+      'installmentPlans',
+      'inst',
+      undefined,
+      options
+    ),
+    pointEntries: createEntityRepository<'pointEntries', GamificationPointEntry>(
+      adapter,
+      'pointEntries',
+      'pts',
       undefined,
       options
     ),

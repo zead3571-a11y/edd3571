@@ -2,13 +2,16 @@ import React, { useMemo, useState } from 'react';
 import {
   AlertCircle,
   ArrowRight,
+  Award,
   BookOpen,
   CalendarDays,
   CheckCircle2,
   CheckSquare,
   ClipboardList,
+  ExternalLink,
   Eye,
   EyeOff,
+  FileText,
   HelpCircle,
   Home,
   KeyRound,
@@ -18,10 +21,17 @@ import {
   PlayCircle,
   ShieldCheck,
   Smartphone,
+  Trophy,
   User,
+  Video,
 } from 'lucide-react';
 import { useEduflow } from '../../context/EduflowContext';
-import { ScreenId, StudentDeviceSession, UserRole } from '../../types/eduflow';
+import {
+  OnlineExam,
+  ScreenId,
+  StudentDeviceSession,
+  UserRole,
+} from '../../types/eduflow';
 import {
   Button,
   Card,
@@ -29,14 +39,25 @@ import {
   EmptyState,
   Field,
   InitialAvatar,
+  Modal,
+  SelectInput,
   StatusChip,
   TextInput,
 } from '../ui/Primitives';
-import { formatDateDDMMYYYY } from '../../utils/eduflowLogic';
+import { formatDateDDMMYYYY, formatNumber } from '../../utils/eduflowLogic';
 import {
   DEFAULT_STUDENT_MAX_DEVICES,
   validateStudentPin,
 } from '../../features/studentPortal/studentAuthService';
+import {
+  computeExamMaxScore,
+  parseVideoEmbedUrl,
+} from '../../features/studentPortal/lessonsAndExams';
+import {
+  computeLeaderboard,
+  computeStudentPointsTotal,
+  getPointsBadge,
+} from '../../features/gamification/pointsService';
 
 function formatIsoToDDMMYYYY(isoOrMs: string | number | undefined): string {
   if (!isoOrMs) return '—';
@@ -520,6 +541,15 @@ export const StudentPortalScreen: React.FC = () => {
     attendanceRecords,
     assessments,
     studentSessions,
+    lessons,
+    onlineExams,
+    examAttempts,
+    assignments,
+    assignmentSubmissions,
+    pointEntries,
+    markLessonWatched,
+    submitOnlineExamAttempt,
+    submitAssignmentAnswer,
     changeStudentPortalPin,
     revokeSingleStudentPortalSession,
     revokeAllStudentPortalSessions,
@@ -529,6 +559,11 @@ export const StudentPortalScreen: React.FC = () => {
   } = useEduflow();
 
   const [tab, setTab] = useState<'home' | 'lessons' | 'exams' | 'attendance' | 'account'>('home');
+  const [examsSubTab, setExamsSubTab] = useState<'online' | 'assignments' | 'center'>('online');
+  const [activeExamRunner, setActiveExamRunner] = useState<OnlineExam | null>(null);
+  const [examAnswers, setExamAnswers] = useState<number[]>([]);
+  const [activeVideoLessonId, setActiveVideoLessonId] = useState<string | null>(null);
+  const [assignmentInputs, setAssignmentInputs] = useState<Record<string, string>>({});
 
   // Change PIN form state
   const [oldPin, setOldPin] = useState('');
@@ -555,6 +590,35 @@ export const StudentPortalScreen: React.FC = () => {
     if (!student) return [];
     return groups.filter((g) => student.groupIds.includes(g.id));
   }, [groups, student]);
+
+  const studentLessons = useMemo(() => {
+    if (!student) return [];
+    const myGroupSet = new Set(student.groupIds);
+    return lessons.filter((l) => l.published && myGroupSet.has(l.groupId));
+  }, [lessons, student]);
+
+  const studentOnlineExams = useMemo(() => {
+    if (!student) return [];
+    const myGroupSet = new Set(student.groupIds);
+    return onlineExams.filter((ex) => ex.published && myGroupSet.has(ex.groupId));
+  }, [onlineExams, student]);
+
+  const studentAssignments = useMemo(() => {
+    if (!student) return [];
+    const myGroupSet = new Set(student.groupIds);
+    return assignments.filter((a) => myGroupSet.has(a.groupId));
+  }, [assignments, student]);
+
+  const myPointsTotal = useMemo(() => {
+    if (!student) return 0;
+    return computeStudentPointsTotal(pointEntries, student.id);
+  }, [student, pointEntries]);
+
+  const myBadge = useMemo(() => getPointsBadge(myPointsTotal), [myPointsTotal]);
+  const leaderboard = useMemo(
+    () => computeLeaderboard(students, pointEntries).slice(0, 5),
+    [students, pointEntries]
+  );
 
   const studentSessionsSchedule = useMemo(() => {
     if (!student) return [];
@@ -779,7 +843,7 @@ export const StudentPortalScreen: React.FC = () => {
                 <div className="flex items-center justify-between">
                   <h3 className="text-sm font-bold text-[#0F2A4A] flex items-center gap-2">
                     <PlayCircle className="w-4 h-4 text-[#0F766E]" />
-                    <span>دروس جديدة</span>
+                    <span>دروس متاحة ({formatNumber(studentLessons.length)})</span>
                   </h3>
                   <button
                     type="button"
@@ -790,7 +854,9 @@ export const StudentPortalScreen: React.FC = () => {
                   </button>
                 </div>
                 <p className="text-xs text-[#5B6B80] leading-relaxed">
-                  ستظهر هنا محاضرات الفيديو والملفات المرفوعة لمجموعاتك فور إتاحتها.
+                  {studentLessons.length > 0
+                    ? `أحدث درس: ${studentLessons[0].title}`
+                    : 'ستظهر هنا محاضرات الفيديو والملفات المرفوعة لمجموعاتك فور إتاحتها.'}
                 </p>
               </Card>
 
@@ -798,21 +864,69 @@ export const StudentPortalScreen: React.FC = () => {
                 <div className="flex items-center justify-between">
                   <h3 className="text-sm font-bold text-[#0F2A4A] flex items-center gap-2">
                     <ClipboardList className="w-4 h-4 text-[#0F766E]" />
-                    <span>امتحانات مفتوحة</span>
+                    <span>امتحانات وواجبات ({formatNumber(studentOnlineExams.length + studentAssignments.length)})</span>
                   </h3>
                   <button
                     type="button"
                     onClick={() => setTab('exams')}
                     className="text-xs font-bold text-[#0F766E] hover:underline cursor-pointer"
                   >
-                    عرض الكل
+                    ابدأ الآن
                   </button>
                 </div>
                 <p className="text-xs text-[#5B6B80] leading-relaxed">
-                  لا توجد اختبارات أونلاين مفتوحة الآن. راجع نتائج تقييماتك السابقة من تبويب الامتحانات.
+                  {studentOnlineExams.length > 0
+                    ? `لديك ${studentOnlineExams.length} امتحان أونلاين و ${studentAssignments.length} واجب إلكتروني.`
+                    : 'راجع نتائج تقييماتك السابقة وواجباتك من تبويب الامتحانات.'}
                 </p>
               </Card>
             </div>
+
+            {/* Gamification Points & Leaderboard Card */}
+            <Card className="p-5 space-y-3 border-amber-200 bg-gradient-to-l from-amber-50/50 to-white">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <div className="w-9 h-9 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center">
+                    <Trophy className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h2 className="text-sm font-bold text-[#0F2A4A]">نقاط التحفيز ولوحة الشرف</h2>
+                    <p className="text-xs text-[#5B6B80]">
+                      المستوى الحالي: <strong>{myBadge.title}</strong>
+                    </p>
+                  </div>
+                </div>
+                <div className="text-left">
+                  <span className="text-2xl font-extrabold text-[#0F766E] tabular-nums">
+                    {formatNumber(myPointsTotal)}
+                  </span>
+                  <span className="text-xs text-[#5B6B80] mr-1">نقطة</span>
+                </div>
+              </div>
+
+              {leaderboard.length > 0 && (
+                <div className="pt-2 border-t border-amber-200/60 space-y-1.5">
+                  <div className="text-xs font-bold text-[#0F2A4A]">أوائل السنتر في النقاط</div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                    {leaderboard.map((row, idx) => (
+                      <div
+                        key={row.studentId}
+                        className={`px-3 py-1.5 rounded-lg text-xs flex items-center justify-between ${
+                          row.studentId === student.id
+                            ? 'bg-[#0F766E] text-white font-bold'
+                            : 'bg-white border border-[#E2E8F0] text-[#1E293B]'
+                        }`}
+                      >
+                        <span>
+                          #{idx + 1} {row.studentName}
+                        </span>
+                        <span className="tabular-nums font-bold">{formatNumber(row.totalPoints)} نقطة</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </Card>
 
             {/* Latest Assessment Results */}
             <Card className="p-5 space-y-3">
@@ -861,64 +975,99 @@ export const StudentPortalScreen: React.FC = () => {
         {/* Tab 2: الدروس */}
         {tab === 'lessons' && (
           <div className="space-y-4">
-            <h1 className="text-lg font-bold text-[#0F2A4A]">الدروس المسجلة والمواد التعليمية</h1>
-            <EmptyState
-              title="لا توجد دروس فيديو منشورة بعد"
-              description="عند قيام مدرس مجموعتك بنشر الحصص المسجلة أو ملفات الشرح، ستظهر هنا مرتبة حسب كل مادة."
-            />
-            {studentGroups.length > 0 && (
-              <Card className="p-5 space-y-3">
-                <h2 className="text-sm font-bold text-[#0F2A4A]">مجموعاتك المشترك بها</h2>
-                <div className="space-y-2">
-                  {studentGroups.map((g) => (
-                    <div
-                      key={g.id}
-                      className="p-3 rounded-[8px] bg-[#F4F7FA] border border-[#E2E8F0] flex items-center justify-between text-xs"
-                    >
-                      <span className="font-bold text-[#0F2A4A]">{g.name}</span>
-                      <span className="text-[#5B6B80]">{g.subject}</span>
-                    </div>
-                  ))}
-                </div>
-              </Card>
-            )}
-          </div>
-        )}
-
-        {/* Tab 3: الامتحانات */}
-        {tab === 'exams' && (
-          <div className="space-y-4">
-            <h1 className="text-lg font-bold text-[#0F2A4A]">الامتحانات والنتائج</h1>
-
-            {studentAssessments.length === 0 ? (
+            <h1 className="text-lg font-bold text-[#0F2A4A]">الدروس المسجلة والبث المباشر</h1>
+            {studentLessons.length === 0 ? (
               <EmptyState
-                title="لا توجد امتحانات أو درجات مسجلة بعد"
-                description="ستظهر هنا الامتحانات الإلكترونية المتاحة وكذلك نتائج تقييماتك داخل السنتر."
+                title="لا توجد دروس فيديو منشورة بعد"
+                description="عند قيام مدرس مجموعتك بنشر الحصص المسجلة أو ملفات الشرح، ستظهر هنا مرتبة حسب كل مادة."
               />
             ) : (
-              <div className="space-y-3">
-                {studentAssessments.map((as) => {
-                  const gr = as.grades.find((g) => g.studentId === student.id);
-                  const grp = groups.find((g) => g.id === as.groupId);
+              <div className="space-y-4">
+                {studentLessons.map((lesson) => {
+                  const grp = groups.find((g) => g.id === lesson.groupId);
+                  const watched = Boolean(lesson.watchedByStudentIds?.includes(student.id));
+                  const embed = parseVideoEmbedUrl(lesson.videoUrl);
+                  const expanded = activeVideoLessonId === lesson.id;
+
                   return (
-                    <Card key={as.id} className="p-4 flex items-center justify-between gap-3">
-                      <div>
-                        <span className="text-xs text-[#5B6B80]">
-                          {grp?.name} · {as.date}
-                        </span>
-                        <h3 className="text-sm font-bold text-[#0F2A4A] mt-0.5">{as.title}</h3>
-                        <span className="text-[11px] text-[#5B6B80]">{as.type}</span>
+                    <Card key={lesson.id} className="p-5 space-y-3">
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <StatusChip
+                              tone={watched ? 'success' : 'navy'}
+                              label={watched ? 'تمت المشاهدة' : 'درس جديد'}
+                            />
+                            <span className="text-xs text-[#5B6B80] tabular-nums">
+                              {grp?.name} · {lesson.durationMinutes || 30} دقيقة
+                            </span>
+                          </div>
+                          <h2 className="text-base font-bold text-[#0F2A4A] mt-2">
+                            {lesson.title}
+                          </h2>
+                          <p className="text-xs text-[#5B6B80] mt-1">{lesson.description}</p>
+                        </div>
                       </div>
-                      <div className="text-left shrink-0">
-                        {gr?.absent ? (
-                          <StatusChip tone="danger" label="غائب" />
-                        ) : gr?.score !== null && gr?.score !== undefined ? (
-                          <span className="text-lg font-bold text-[#0F766E] tabular-nums">
-                            {gr.score} / {as.maxScore}
-                          </span>
-                        ) : (
-                          <StatusChip tone="neutral" label="قيد التصحيح" />
+
+                      {expanded && embed?.embedUrl && (
+                        <div className="rounded-xl overflow-hidden border border-[#E2E8F0] bg-slate-900 aspect-video">
+                          {embed.kind === 'direct' ? (
+                            <video
+                              src={embed.embedUrl}
+                              controls
+                              className="w-full h-full"
+                            />
+                          ) : (
+                            <iframe
+                              src={embed.embedUrl}
+                              title={lesson.title}
+                              allowFullScreen
+                              className="w-full h-full"
+                            />
+                          )}
+                        </div>
+                      )}
+
+                      <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-[#E2E8F0]">
+                        {embed?.embedUrl && (
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            icon={<Video className="w-4 h-4" />}
+                            onClick={() =>
+                              setActiveVideoLessonId(expanded ? null : lesson.id)
+                            }
+                          >
+                            {expanded ? 'إخفاء الفيديو' : 'تشغيل شرح الفيديو'}
+                          </Button>
                         )}
+                        {lesson.liveUrl && (
+                          <a
+                            href={lesson.liveUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1.5 min-h-[38px] px-3 rounded-[8px] border border-[#E2E8F0] text-xs font-bold text-[#0F2A4A] hover:bg-slate-50"
+                          >
+                            <ExternalLink className="w-3.5 h-3.5 text-[#0F766E]" />
+                            <span>دخول البث المباشر ({lesson.liveScheduleLabel || 'مباشر'})</span>
+                          </a>
+                        )}
+                        {lesson.attachmentName && (
+                          <span className="inline-flex items-center gap-1 text-xs text-[#475569] bg-slate-100 px-2.5 py-1.5 rounded-lg">
+                            <FileText className="w-3.5 h-3.5 text-[#0F766E]" />
+                            {lesson.attachmentName}
+                          </span>
+                        )}
+                        <Button
+                          size="sm"
+                          variant={watched ? 'secondary' : 'primary'}
+                          disabled={watched}
+                          icon={<CheckCircle2 className="w-4 h-4" />}
+                          onClick={() => markLessonWatched(lesson.id)}
+                          className="mr-auto"
+                        >
+                          {watched ? 'مكتمل (+10 نقاط)' : 'تسجيل إتمام المشاهدة (+10 نقاط)'}
+                        </Button>
                       </div>
                     </Card>
                   );
@@ -927,6 +1076,290 @@ export const StudentPortalScreen: React.FC = () => {
             )}
           </div>
         )}
+
+        {/* Tab 3: الامتحانات والواجبات */}
+        {tab === 'exams' && (
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h1 className="text-lg font-bold text-[#0F2A4A]">الامتحانات والواجبات</h1>
+              <div className="inline-flex items-center gap-1 p-1 bg-white border border-[#E2E8F0] rounded-[10px] text-xs">
+                {(
+                  [
+                    { id: 'online', label: `امتحانات أونلاين (${studentOnlineExams.length})` },
+                    { id: 'assignments', label: `الواجبات (${studentAssignments.length})` },
+                    { id: 'center', label: `نتائج السنتر (${studentAssessments.length})` },
+                  ] as const
+                ).map((sub) => (
+                  <button
+                    key={sub.id}
+                    type="button"
+                    onClick={() => setExamsSubTab(sub.id)}
+                    className={`px-3 py-1.5 rounded-[7px] font-bold cursor-pointer whitespace-nowrap ${
+                      examsSubTab === sub.id
+                        ? 'bg-[#0F2A4A] text-white'
+                        : 'text-[#5B6B80] hover:text-[#0F2A4A]'
+                    }`}
+                  >
+                    {sub.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {examsSubTab === 'online' &&
+              (studentOnlineExams.length === 0 ? (
+                <EmptyState
+                  title="لا توجد امتحانات أونلاين متاحة حالياً"
+                  description="عند نشر اختبارات تفاعلية جديدة لمجموعتك ستظهر هنا فوراً."
+                />
+              ) : (
+                <div className="space-y-3">
+                  {studentOnlineExams.map((exam) => {
+                    const grp = groups.find((g) => g.id === exam.groupId);
+                    const myAttempt = examAttempts.find(
+                      (a) => a.examId === exam.id && a.studentId === student.id
+                    );
+                    const totalScore = computeExamMaxScore(exam.questions);
+                    return (
+                      <Card key={exam.id} className="p-4 flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-[#5B6B80] tabular-nums">
+                              {grp?.name} · {exam.questions.length} سؤال · {exam.durationMinutes} دقيقة
+                            </span>
+                            {myAttempt && (
+                              <StatusChip
+                                tone={myAttempt.passed ? 'success' : 'warning'}
+                                label={
+                                  myAttempt.passed
+                                    ? `ناجح (${myAttempt.score}/${myAttempt.maxScore})`
+                                    : `${myAttempt.score}/${myAttempt.maxScore}`
+                                }
+                              />
+                            )}
+                          </div>
+                          <h3 className="text-base font-bold text-[#0F2A4A] mt-1">{exam.title}</h3>
+                        </div>
+
+                        <Button
+                          size="sm"
+                          variant={myAttempt ? 'secondary' : 'primary'}
+                          onClick={() => {
+                            setActiveExamRunner(exam);
+                            setExamAnswers(exam.questions.map(() => 0));
+                          }}
+                        >
+                          {myAttempt
+                            ? `إعادة المحاولة (${totalScore} درجة)`
+                            : `بدء الامتحان الآن (${totalScore} درجة)`}
+                        </Button>
+                      </Card>
+                    );
+                  })}
+                </div>
+              ))}
+
+            {examsSubTab === 'assignments' &&
+              (studentAssignments.length === 0 ? (
+                <EmptyState
+                  title="لا توجد واجبات إلكترونية مطلوبة"
+                  description="عند إضافة واجبات جديدة ستظهر هنا لتسليم إجابتك ومعرفة الدرجة."
+                />
+              ) : (
+                <div className="space-y-3">
+                  {studentAssignments.map((assign) => {
+                    const grp = groups.find((g) => g.id === assign.groupId);
+                    const mySub = assignmentSubmissions.find(
+                      (s) => s.assignmentId === assign.id && s.studentId === student.id
+                    );
+                    const draftText = assignmentInputs[assign.id] ?? mySub?.answerText ?? '';
+
+                    return (
+                      <Card key={assign.id} className="p-5 space-y-3">
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <StatusChip
+                                tone={
+                                  mySub?.status === 'graded'
+                                    ? 'success'
+                                    : mySub
+                                    ? 'navy'
+                                    : assign.status === 'open'
+                                    ? 'warning'
+                                    : 'neutral'
+                                }
+                                label={
+                                  mySub?.status === 'graded'
+                                    ? `تم التصحيح: ${mySub.score}/${assign.maxScore}`
+                                    : mySub
+                                    ? 'تم التسليم'
+                                    : assign.status === 'open'
+                                    ? 'مطلوب تسليمه'
+                                    : 'مغلق'
+                                }
+                              />
+                              <span className="text-xs text-[#5B6B80] tabular-nums">
+                                {grp?.name} · آخر موعد: {formatDateDDMMYYYY(assign.dueDate)}
+                              </span>
+                            </div>
+                            <h3 className="text-base font-bold text-[#0F2A4A] mt-1.5">
+                              {assign.title}
+                            </h3>
+                            <p className="text-xs text-[#5B6B80] mt-0.5">{assign.description}</p>
+                          </div>
+                        </div>
+
+                        {mySub?.feedback && (
+                          <div className="p-2.5 rounded-lg bg-[#D1FAE5]/40 border border-emerald-200 text-xs text-[#065F46]">
+                            <strong>تعليق المدرس:</strong> {mySub.feedback}
+                          </div>
+                        )}
+
+                        {assign.status === 'open' && mySub?.status !== 'graded' && (
+                          <div className="space-y-2 pt-2 border-t border-[#E2E8F0]">
+                            <textarea
+                              rows={2}
+                              value={draftText}
+                              onChange={(e) =>
+                                setAssignmentInputs((prev) => ({
+                                  ...prev,
+                                  [assign.id]: e.target.value,
+                                }))
+                              }
+                              placeholder="اكتب إجابتك أو رابط ملف الحل هنا..."
+                              className="w-full p-2.5 rounded-[8px] border border-[#E2E8F0] text-sm focus:outline-none focus:border-[#0F766E]"
+                            />
+                            <Button
+                              size="sm"
+                              variant="primary"
+                              onClick={() => {
+                                if (!draftText.trim()) return;
+                                submitAssignmentAnswer({
+                                  assignmentId: assign.id,
+                                  answerText: draftText.trim(),
+                                });
+                              }}
+                            >
+                              {mySub ? 'تحديث الإجابة المرسلة' : 'تسليم الواجب'}
+                            </Button>
+                          </div>
+                        )}
+                      </Card>
+                    );
+                  })}
+                </div>
+              ))}
+
+            {examsSubTab === 'center' &&
+              (studentAssessments.length === 0 ? (
+                <EmptyState
+                  title="لا توجد درجات سنتر مسجلة بعد"
+                  description="ستظهر هنا نتائج اختباراتك الورقية داخل السنتر."
+                />
+              ) : (
+                <div className="space-y-3">
+                  {studentAssessments.map((as) => {
+                    const gr = as.grades.find((g) => g.studentId === student.id);
+                    const grp = groups.find((g) => g.id === as.groupId);
+                    return (
+                      <Card key={as.id} className="p-4 flex items-center justify-between gap-3">
+                        <div>
+                          <span className="text-xs text-[#5B6B80]">
+                            {grp?.name} · {as.date}
+                          </span>
+                          <h3 className="text-sm font-bold text-[#0F2A4A] mt-0.5">{as.title}</h3>
+                          <span className="text-[11px] text-[#5B6B80]">{as.type}</span>
+                        </div>
+                        <div className="text-left shrink-0">
+                          {gr?.absent ? (
+                            <StatusChip tone="danger" label="غائب" />
+                          ) : gr?.score !== null && gr?.score !== undefined ? (
+                            <span className="text-lg font-bold text-[#0F766E] tabular-nums">
+                              {gr.score} / {as.maxScore}
+                            </span>
+                          ) : (
+                            <StatusChip tone="neutral" label="قيد التصحيح" />
+                          )}
+                        </div>
+                      </Card>
+                    );
+                  })}
+                </div>
+              ))}
+          </div>
+        )}
+
+        {/* Online Exam Runner Modal */}
+        <Modal
+          open={Boolean(activeExamRunner)}
+          onClose={() => setActiveExamRunner(null)}
+          title={activeExamRunner?.title || 'امتحان أونلاين'}
+          maxWidth="max-w-2xl"
+        >
+          {activeExamRunner && (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                submitOnlineExamAttempt(activeExamRunner.id, examAnswers);
+                setActiveExamRunner(null);
+              }}
+              className="space-y-4"
+            >
+              {activeExamRunner.questions.map((q, qIdx) => (
+                <div
+                  key={q.id}
+                  className="p-3.5 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] space-y-2.5"
+                >
+                  <div className="text-sm font-bold text-[#0F2A4A]">
+                    {qIdx + 1}. {q.prompt}{' '}
+                    <span className="text-xs text-[#0F766E] tabular-nums">
+                      ({q.points} درجات)
+                    </span>
+                  </div>
+                  <div className="space-y-1.5">
+                    {q.options.map((opt, oIdx) => (
+                      <label
+                        key={oIdx}
+                        className={`flex items-center gap-2.5 p-2.5 rounded-lg border text-sm cursor-pointer ${
+                          examAnswers[qIdx] === oIdx
+                            ? 'bg-[#F0FDFA] border-[#0F766E] font-bold text-[#0F2A4A]'
+                            : 'bg-white border-[#E2E8F0] text-[#475569]'
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name={`ans-${q.id}`}
+                          checked={examAnswers[qIdx] === oIdx}
+                          onChange={() =>
+                            setExamAnswers((prev) =>
+                              prev.map((val, idx) => (idx === qIdx ? oIdx : val))
+                            )
+                          }
+                          className="accent-[#0F766E]"
+                        />
+                        <span>{opt}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              ))}
+
+              <div className="flex justify-end gap-2 pt-2">
+                <Button
+                  variant="secondary"
+                  type="button"
+                  onClick={() => setActiveExamRunner(null)}
+                >
+                  إلغاء
+                </Button>
+                <Button variant="primary" type="submit" icon={<Award className="w-4 h-4" />}>
+                  تسليم الإجابات وظهور النتيجة الفورية
+                </Button>
+              </div>
+            </form>
+          )}
+        </Modal>
 
         {/* Tab 4: حضوري */}
         {tab === 'attendance' && (

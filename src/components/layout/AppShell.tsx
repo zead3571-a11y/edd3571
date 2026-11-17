@@ -1,11 +1,15 @@
 import React, { useState } from 'react';
 import {
   AlertTriangle,
+  Banknote,
   BarChart3,
   Bell,
   BookOpen,
+  Bot,
+  CalendarClock,
   CalendarDays,
   CheckSquare,
+  ClipboardPlus,
   CreditCard,
   FileSpreadsheet,
   GraduationCap,
@@ -13,12 +17,14 @@ import {
   Layers,
   LogOut,
   MoreHorizontal,
+  Package,
   Receipt,
   Search,
   Settings,
   ShieldAlert,
   Sparkles,
   UserCheck,
+  UserPlus,
   Users,
   Wallet,
   X,
@@ -52,6 +58,13 @@ const SCREEN_TITLES: Record<ScreenId, string> = {
   [ScreenId.PAYMENTS]: 'المدفوعات والفواتير',
   [ScreenId.LATE_PAYMENTS]: 'المتأخرون في الدفع',
   [ScreenId.EXPENSES]: 'المصروفات',
+  [ScreenId.CASH_REGISTER]: 'قفل اليومية والخزنة',
+  [ScreenId.INSTALLMENTS]: 'خطط التقسيط والأقساط',
+  [ScreenId.INVENTORY]: 'المذكرات والمخزون',
+  [ScreenId.REGISTRATION_CRM]: 'التسجيل الأونلاين والعملاء المحتملون',
+  [ScreenId.ONLINE_REGISTRATION]: 'استمارة التسجيل الأونلاين للطلاب',
+  [ScreenId.STAFF_PAYROLL]: 'حضور الموظفين والمرتبات',
+  [ScreenId.AI_ASSISTANT]: 'المساعد الذكي للسنتر',
   [ScreenId.ASSESSMENTS]: 'التقييمات والامتحانات',
   [ScreenId.NOTIFICATIONS]: 'مركز الإشعارات',
   [ScreenId.REPORTS]: 'التقارير',
@@ -91,7 +104,7 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
   const [globalSearch, setGlobalSearch] = useState('');
   const [searchDropdownOpen, setSearchDropdownOpen] = useState(false);
 
-  // Standalone full-bleed screens (Landing, Login, Onboarding, Parent Portal, Student Portal/Login, or any screen while logged in as Student)
+  // Standalone full-bleed screens (Landing, Login, Onboarding, Parent Portal, Student Portal/Login, Online Registration, or Student role)
   const isStandalone =
     currentScreen === ScreenId.LANDING ||
     currentScreen === ScreenId.LOGIN ||
@@ -99,6 +112,7 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
     currentScreen === ScreenId.PARENT_PORTAL ||
     currentScreen === ScreenId.STUDENT_LOGIN ||
     currentScreen === ScreenId.STUDENT_PORTAL ||
+    currentScreen === ScreenId.ONLINE_REGISTRATION ||
     currentRole === UserRole.STUDENT;
 
   if (isStandalone) {
@@ -166,14 +180,40 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
     },
     {
       id: ScreenId.PAYMENTS,
-      label: 'المدفوعات',
+      label: 'المدفوعات والخزنة',
       icon: <Wallet className="w-4 h-4" />,
-      matchIds: [ScreenId.PAYMENTS, ScreenId.LATE_PAYMENTS, ScreenId.EXPENSES],
+      matchIds: [
+        ScreenId.PAYMENTS,
+        ScreenId.LATE_PAYMENTS,
+        ScreenId.EXPENSES,
+        ScreenId.CASH_REGISTER,
+        ScreenId.INSTALLMENTS,
+      ],
+    },
+    {
+      id: ScreenId.INVENTORY,
+      label: 'المذكرات والمخزون',
+      icon: <Package className="w-4 h-4" />,
+    },
+    {
+      id: ScreenId.REGISTRATION_CRM,
+      label: 'طلبات التسجيل CRM',
+      icon: <ClipboardPlus className="w-4 h-4" />,
+    },
+    {
+      id: ScreenId.STAFF_PAYROLL,
+      label: 'الموظفون والمرتبات',
+      icon: <Banknote className="w-4 h-4" />,
     },
     {
       id: ScreenId.ASSESSMENTS,
-      label: 'التقييمات',
+      label: 'التقييمات والدروس',
       icon: <BookOpen className="w-4 h-4" />,
+    },
+    {
+      id: ScreenId.AI_ASSISTANT,
+      label: 'المساعد الذكي AI',
+      icon: <Bot className="w-4 h-4" />,
     },
     {
       id: ScreenId.REPORTS,
@@ -285,6 +325,14 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
             >
               <GraduationCap className="w-4 h-4" />
               <span>بوابة الطالب</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate(ScreenId.ONLINE_REGISTRATION)}
+              className="w-full flex items-center gap-3 px-3 py-2 rounded-[8px] text-xs font-semibold text-slate-300 hover:bg-white/10 cursor-pointer"
+            >
+              <UserPlus className="w-4 h-4" />
+              <span>استمارة التسجيل الأونلاين</span>
             </button>
             {canAccessScreen(currentActor, ScreenId.DESIGN_SYSTEM) && (
               <button
@@ -730,12 +778,19 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
                 { id: ScreenId.ATTENDANCE_HISTORY, label: 'سجل الحضور', icon: <FileSpreadsheet className="w-4 h-4" /> },
                 { id: ScreenId.LATE_PAYMENTS, label: 'المتأخرون في الدفع', icon: <AlertTriangle className="w-4 h-4" /> },
                 { id: ScreenId.EXPENSES, label: 'المصروفات', icon: <Receipt className="w-4 h-4" /> },
-                { id: ScreenId.ASSESSMENTS, label: 'التقييمات والامتحانات', icon: <BookOpen className="w-4 h-4" /> },
+                { id: ScreenId.CASH_REGISTER, label: 'قفل اليومية والخزنة', icon: <Wallet className="w-4 h-4" /> },
+                { id: ScreenId.INSTALLMENTS, label: 'خطط التقسيط', icon: <CalendarClock className="w-4 h-4" /> },
+                { id: ScreenId.INVENTORY, label: 'المذكرات والمخزون', icon: <Package className="w-4 h-4" /> },
+                { id: ScreenId.REGISTRATION_CRM, label: 'طلبات التسجيل CRM', icon: <ClipboardPlus className="w-4 h-4" /> },
+                { id: ScreenId.STAFF_PAYROLL, label: 'الموظفون والمرتبات', icon: <Banknote className="w-4 h-4" /> },
+                { id: ScreenId.ASSESSMENTS, label: 'التقييمات والدروس', icon: <BookOpen className="w-4 h-4" /> },
+                { id: ScreenId.AI_ASSISTANT, label: 'المساعد الذكي AI', icon: <Bot className="w-4 h-4" /> },
                 { id: ScreenId.NOTIFICATIONS, label: 'مركز الإشعارات', icon: <Bell className="w-4 h-4" /> },
                 { id: ScreenId.REPORTS, label: 'التقارير', icon: <BarChart3 className="w-4 h-4" /> },
                 { id: ScreenId.SETTINGS, label: 'الإعدادات', icon: <Settings className="w-4 h-4" /> },
                 { id: ScreenId.SUBSCRIPTION, label: 'الاشتراك والباقات', icon: <CreditCard className="w-4 h-4" /> },
                 { id: ScreenId.PARENT_PORTAL, label: 'بوابة ولي الأمر', icon: <UserCheck className="w-4 h-4" /> },
+                { id: ScreenId.ONLINE_REGISTRATION, label: 'تسجيل طالب أونلاين', icon: <UserPlus className="w-4 h-4" /> },
                 { id: ScreenId.DESIGN_SYSTEM, label: 'مكتبة المكونات', icon: <Layers className="w-4 h-4" /> },
                 { id: ScreenId.LANDING, label: 'الصفحة الرئيسية للمنصة', icon: <Home className="w-4 h-4" /> },
               ]

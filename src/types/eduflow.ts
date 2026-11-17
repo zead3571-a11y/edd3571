@@ -33,6 +33,13 @@ export enum ScreenId {
   PARENT_PORTAL = 'parent_portal',
   STUDENT_LOGIN = 'student_login',
   STUDENT_PORTAL = 'student_portal',
+  CASH_REGISTER = 'cash_register',
+  INSTALLMENTS = 'installments',
+  INVENTORY = 'inventory',
+  REGISTRATION_CRM = 'registration_crm',
+  ONLINE_REGISTRATION = 'online_registration',
+  STAFF_PAYROLL = 'staff_payroll',
+  AI_ASSISTANT = 'ai_assistant',
   DESIGN_SYSTEM = 'design_system',
 }
 
@@ -336,6 +343,11 @@ export interface OutboxMessage {
   templateId?: string;
   body: string;
   status: 'ready' | 'sent' | 'failed';
+  deliveryStatus?: 'ready' | 'sent' | 'delivered' | 'read' | 'failed';
+  providerMessageId?: string;
+  mode?: 'template' | 'text' | 'wa_me';
+  errorCode?: string;
+  errorAr?: string;
   createdAt: string;
   sentAt?: string;
 }
@@ -481,6 +493,15 @@ export interface CenterSettings {
   studentSessionDays?: number;
   integrations?: Record<IntegrationKey, IntegrationConfig>;
   planFeatureOverrides?: Partial<Record<'basic' | 'pro' | 'enterprise', Record<string, boolean>>>;
+  autoReminderRule?: AutoReminderRule;
+}
+
+export interface AutoReminderRule {
+  enabled: boolean;
+  daysOverdueThreshold: number;
+  includePendingDueSoon: boolean;
+  channel: 'cloud_api' | 'outbox_only';
+  lastRunAt?: string;
 }
 
 export interface StudentPortalAccount {
@@ -590,3 +611,224 @@ export interface FileAssetRecord {
   uploadedAt: string;
   uploadedBy: string;
 }
+
+export interface LessonItem {
+  id: string;
+  centerId: string;
+  title: string;
+  groupId: string;
+  teacherId: string;
+  description: string;
+  videoUrl?: string;
+  liveUrl?: string;
+  liveScheduleLabel?: string;
+  attachmentName?: string;
+  durationMinutes?: number;
+  published: boolean;
+  watchedByStudentIds?: string[];
+  createdAt: string;
+}
+
+export interface OnlineExamQuestion {
+  id: string;
+  prompt: string;
+  type: 'mcq' | 'tf';
+  options: string[];
+  correctIndex: number;
+  points: number;
+}
+
+export interface OnlineExam {
+  id: string;
+  centerId: string;
+  title: string;
+  groupId: string;
+  teacherId: string;
+  durationMinutes: number;
+  passingScore: number;
+  published: boolean;
+  questions: OnlineExamQuestion[];
+  createdAt: string;
+}
+
+export interface OnlineExamAttempt {
+  id: string;
+  centerId: string;
+  examId: string;
+  studentId: string;
+  answers: number[];
+  score: number;
+  maxScore: number;
+  passed: boolean;
+  submittedAt: string;
+}
+
+export interface Assignment {
+  id: string;
+  centerId: string;
+  title: string;
+  description: string;
+  groupId: string;
+  teacherId: string;
+  dueDate: string;
+  maxScore: number;
+  status: 'open' | 'closed';
+  createdAt: string;
+}
+
+export interface AssignmentSubmission {
+  id: string;
+  centerId: string;
+  assignmentId: string;
+  studentId: string;
+  answerText: string;
+  attachmentName?: string;
+  submittedAt: string;
+  score?: number;
+  feedback?: string;
+  status: 'submitted' | 'graded';
+}
+
+export interface CashRegisterShift {
+  id: string;
+  centerId: string;
+  status: 'open' | 'closed';
+  openedAt: string;
+  openedBy: string;
+  openingBalance: number;
+  closedAt?: string;
+  closedBy?: string;
+  cashCollected: number;
+  instapayCollected: number;
+  walletCollected: number;
+  bankCollected: number;
+  expensesTotal: number;
+  settlementsPaidTotal: number;
+  expectedCashInDrawer: number;
+  actualCountedCash?: number;
+  variance?: number;
+  note?: string;
+}
+
+export interface InventoryItem {
+  id: string;
+  centerId: string;
+  name: string;
+  category: 'مذكرة' | 'كتاب' | 'أدوات' | 'أخرى';
+  stage: string;
+  subject: string;
+  groupId?: string;
+  unitPrice: number;
+  costPrice: number;
+  stockQty: number;
+  minStockAlert: number;
+  createdAt: string;
+}
+
+export interface InventoryTransaction {
+  id: string;
+  centerId: string;
+  itemId: string;
+  itemName: string;
+  type: 'restock' | 'sale' | 'issue' | 'adjustment';
+  qty: number;
+  unitPrice: number;
+  totalAmount: number;
+  studentId?: string;
+  studentName?: string;
+  paymentMethod?: PaymentRecord['method'];
+  handledBy: string;
+  date: string;
+  note?: string;
+  createdAt: string;
+}
+
+export type RegistrationLeadStatus = 'new' | 'contacted' | 'trial' | 'converted' | 'archived';
+
+export interface RegistrationLead {
+  id: string;
+  centerId: string;
+  ticketCode: string;
+  studentName: string;
+  stage: string;
+  phone: string;
+  parentName: string;
+  parentPhone: string;
+  preferredSubject: string;
+  preferredGroupId?: string;
+  source: 'online_form' | 'walk_in' | 'whatsapp';
+  status: RegistrationLeadStatus;
+  notes: string;
+  convertedStudentId?: string;
+  createdAt: string;
+}
+
+export interface StaffAttendanceRecord {
+  id: string;
+  centerId: string;
+  userId: string;
+  staffName: string;
+  role: string;
+  date: string;
+  checkInTime?: string;
+  checkOutTime?: string;
+  status: 'present' | 'late' | 'absent' | 'leave';
+  note?: string;
+  recordedBy: string;
+}
+
+export interface StaffPayrollRecord {
+  id: string;
+  centerId: string;
+  userId: string;
+  staffName: string;
+  role: string;
+  monthKey: string;
+  monthLabel: string;
+  baseSalary: number;
+  bonuses: number;
+  deductions: number;
+  advances: number;
+  netSalary: number;
+  status: 'pending' | 'paid';
+  paidAt?: string;
+  paymentMethod?: PaymentRecord['method'];
+  paidBy?: string;
+  note?: string;
+}
+
+export interface InstallmentItem {
+  id: string;
+  index: number;
+  dueDate: string;
+  amount: number;
+  paidAmount: number;
+  status: 'pending' | 'partial' | 'paid' | 'overdue';
+  paidAt?: string;
+  receiptNumber?: string;
+}
+
+export interface InstallmentPlan {
+  id: string;
+  centerId: string;
+  studentId: string;
+  invoiceId?: string;
+  title: string;
+  totalAmount: number;
+  downPayment: number;
+  installments: InstallmentItem[];
+  createdBy: string;
+  createdAt: string;
+}
+
+export interface GamificationPointEntry {
+  id: string;
+  centerId: string;
+  studentId: string;
+  points: number;
+  category: 'attendance' | 'exam' | 'assignment' | 'behavior' | 'bonus' | 'redeem';
+  reason: string;
+  awardedBy: string;
+  createdAt: string;
+}
+

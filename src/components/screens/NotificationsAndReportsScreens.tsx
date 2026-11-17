@@ -26,7 +26,11 @@ import {
   StatusChip,
   TextInput,
 } from '../ui/Primitives';
-import { formatEGP } from '../../utils/eduflowLogic';
+import {
+  formatDateDDMMYYYY,
+  formatEGP,
+  formatNumber,
+} from '../../utils/eduflowLogic';
 import {
   buildAttendanceHistoryPdf,
   buildFinancialReportPdf,
@@ -44,6 +48,7 @@ export const NotificationsScreen: React.FC = () => {
     markAllNotificationsRead,
     markNotificationRead,
     markOutboxMessageSent,
+    sendOutboxMessageViaCloudApi,
     setSelectedStudentId,
     showToast,
     navigate,
@@ -51,8 +56,13 @@ export const NotificationsScreen: React.FC = () => {
 
   const [filter, setFilter] = useState<'all' | 'attendance' | 'payments' | 'system' | 'outbox'>('all');
   const [emptyDemo, setEmptyDemo] = useState(false);
+  const [cloudDispatchStatus, setCloudDispatchStatus] = useState<
+    'delivered' | 'read' | 'failed'
+  >('delivered');
+  const [sendingMsgId, setSendingMsgId] = useState<string | null>(null);
 
   const canViewOutbox = can(currentActor, 'view', 'messages');
+  const canSendWhatsapp = can(currentActor, 'send_whatsapp', 'messages');
   const filtered = emptyDemo
     ? []
     : notifications.filter((n) => filter === 'all' || n.category === filter);
@@ -166,74 +176,125 @@ export const NotificationsScreen: React.FC = () => {
             description="ستظهر هنا كل رسائل تنبيه الغياب والتأخيرات والإيصالات المُجهّزة للإرسال عبر واتساب."
           />
         ) : (
-          <Card padding="p-0" className="divide-y divide-[#E2E8F0] overflow-hidden">
-            {messages.map((msg) => (
-              <div
-                key={msg.id}
-                className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
-              >
-                <div className="space-y-1 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-sm font-bold text-[#0F2A4A]">{msg.recipientName}</span>
-                    <span className="text-xs text-[#5B6B80] tabular-nums">
-                      {msg.recipientPhone}
-                    </span>
-                    <StatusChip
-                      tone={
-                        msg.status === 'sent'
-                          ? 'success'
-                          : msg.status === 'failed'
-                          ? 'danger'
-                          : 'warning'
-                      }
-                      label={
-                        msg.status === 'sent'
-                          ? 'تم الإرسال'
-                          : msg.status === 'failed'
-                          ? 'فشل'
-                          : 'جاهز للإرسال'
-                      }
-                    />
-                  </div>
-                  <p className="text-xs text-[#5B6B80] leading-relaxed">{msg.body}</p>
-                </div>
+          <div className="space-y-3">
+            {canSendWhatsapp && (
+              <Card className="p-3.5 flex flex-wrap items-center justify-between gap-2 bg-[#F8FAFC]">
+                <span className="text-xs font-bold text-[#0F2A4A]">
+                  إعداد إرسال WhatsApp Cloud API (حالة Webhook المتوقعة):
+                </span>
+                <SelectInput
+                  value={cloudDispatchStatus}
+                  onChange={(e) =>
+                    setCloudDispatchStatus(e.target.value as 'delivered' | 'read' | 'failed')
+                  }
+                  className="w-auto min-w-[180px] h-9 text-xs"
+                >
+                  <option value="delivered">تم التسليم (delivered)</option>
+                  <option value="read">تمت القراءة (read)</option>
+                  <option value="failed">محاكاة فشل الإرسال (failed)</option>
+                </SelectInput>
+              </Card>
+            )}
 
-                <div className="flex items-center gap-1.5 shrink-0">
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    icon={<Copy className="w-3.5 h-3.5" />}
-                    onClick={() => {
-                      navigator.clipboard?.writeText(msg.body);
-                      showToast('تم نسخ نص الرسالة');
-                    }}
+            <Card padding="p-0" className="divide-y divide-[#E2E8F0] overflow-hidden">
+              {messages.map((msg) => {
+                const deliveryLabel =
+                  msg.deliveryStatus === 'read'
+                    ? 'مقروءة ✓✓'
+                    : msg.deliveryStatus === 'delivered'
+                    ? 'تم التسليم ✓✓'
+                    : msg.deliveryStatus === 'failed'
+                    ? 'فشل الإرسال'
+                    : msg.status === 'sent'
+                    ? 'تم الإرسال'
+                    : 'جاهز للإرسال';
+                const deliveryTone =
+                  msg.deliveryStatus === 'read' || msg.deliveryStatus === 'delivered' || msg.status === 'sent'
+                    ? 'success'
+                    : msg.status === 'failed' || msg.deliveryStatus === 'failed'
+                    ? 'danger'
+                    : 'warning';
+
+                return (
+                  <div
+                    key={msg.id}
+                    className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
                   >
-                    نسخ
-                  </Button>
-                  <a
-                    href={buildWhatsAppUrl(msg.recipientPhone, msg.body)}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    onClick={() => markOutboxMessageSent(msg.id)}
-                    className="inline-flex items-center gap-1.5 min-h-[36px] px-3 rounded-[8px] bg-[#0F766E] text-white text-xs font-bold"
-                  >
-                    <ExternalLink className="w-3.5 h-3.5" />
-                    <span>فتح واتساب</span>
-                  </a>
-                  {msg.status !== 'sent' && (
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      icon={<Check className="w-3.5 h-3.5 text-[#065F46]" />}
-                      onClick={() => markOutboxMessageSent(msg.id)}
-                    >
-                      تم الإرسال
-                    </Button>
-                  )}
-                </div>
-              </div>
-            ))}
-          </Card>
+                    <div className="space-y-1 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-sm font-bold text-[#0F2A4A]">{msg.recipientName}</span>
+                        <span className="text-xs text-[#5B6B80] tabular-nums">
+                          {msg.recipientPhone}
+                        </span>
+                        <StatusChip tone={deliveryTone} label={deliveryLabel} />
+                        {msg.providerMessageId && (
+                          <span className="text-[11px] text-[#64748B] tabular-nums" dir="ltr">
+                            {msg.providerMessageId}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-[#5B6B80] leading-relaxed">{msg.body}</p>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+                      {canSendWhatsapp && (
+                        <Button
+                          size="sm"
+                          variant="primary"
+                          loading={sendingMsgId === msg.id}
+                          onClick={async () => {
+                            setSendingMsgId(msg.id);
+                            try {
+                              await sendOutboxMessageViaCloudApi({
+                                messageId: msg.id,
+                                mode: 'template',
+                                simulateStatus: cloudDispatchStatus,
+                              });
+                            } finally {
+                              setSendingMsgId(null);
+                            }
+                          }}
+                        >
+                          إرسال عبر Cloud API
+                        </Button>
+                      )}
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        icon={<Copy className="w-3.5 h-3.5" />}
+                        onClick={() => {
+                          navigator.clipboard?.writeText(msg.body);
+                          showToast('تم نسخ نص الرسالة');
+                        }}
+                      >
+                        نسخ
+                      </Button>
+                      <a
+                        href={buildWhatsAppUrl(msg.recipientPhone, msg.body)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={() => markOutboxMessageSent(msg.id)}
+                        className="inline-flex items-center gap-1.5 min-h-[38px] px-3 rounded-[8px] border border-[#E2E8F0] bg-white text-[#0F2A4A] text-xs font-bold hover:bg-slate-50"
+                      >
+                        <ExternalLink className="w-3.5 h-3.5 text-[#0F766E]" />
+                        <span>واتساب ويب</span>
+                      </a>
+                      {msg.status !== 'sent' && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          icon={<Check className="w-3.5 h-3.5 text-[#065F46]" />}
+                          onClick={() => markOutboxMessageSent(msg.id)}
+                        >
+                          تم الإرسال
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </Card>
+          </div>
         )
       ) : filtered.length === 0 ? (
         <EmptyState
@@ -266,7 +327,7 @@ export const NotificationsScreen: React.FC = () => {
   );
 };
 
-// 18) Reports Screen (4 Tabs + Locked Plan Blurred State)
+// 18) Reports Screen (5 Tabs + Locked Plan Blurred State)
 export const ReportsScreen: React.FC = () => {
   const {
     currentActor,
@@ -277,6 +338,10 @@ export const ReportsScreen: React.FC = () => {
     expenses,
     students,
     sessions,
+    cashShifts,
+    inventoryTransactions,
+    leads,
+    staffPayrolls,
     centerSettings,
     updateCenterSettings,
     openPdfExport,
@@ -291,7 +356,9 @@ export const ReportsScreen: React.FC = () => {
     can(currentActor, 'export', 'financialReports');
   const canManageSettings = can(currentActor, 'update', 'settings');
 
-  const [tab, setTab] = useState<'attendance' | 'revenue' | 'overdue' | 'teachers'>('attendance');
+  const [tab, setTab] = useState<
+    'attendance' | 'revenue' | 'overdue' | 'teachers' | 'monthly_summary'
+  >('attendance');
   const currentMonthKey = new Date().toISOString().slice(0, 7);
   const [fromDate, setFromDate] = useState(`${currentMonthKey}-01`);
   const [toDate, setToDate] = useState(`${currentMonthKey}-28`);
@@ -304,7 +371,7 @@ export const ReportsScreen: React.FC = () => {
     centerSettings.currentPlanId === 'basic' || centerSettings.reportsLockedDemo;
 
   const handleExportPdf = (mode: 'current' | 'full_financial' = 'current') => {
-    if (mode === 'full_financial') {
+    if (mode === 'full_financial' || tab === 'monthly_summary') {
       openPdfExport(
         buildFinancialReportPdf({
           centerSettings,
@@ -358,6 +425,14 @@ export const ReportsScreen: React.FC = () => {
   const totalCollected = payments.reduce((s, p) => s + p.amount, 0);
   const totalExpenses = expenses.reduce((s, e) => s + e.amount, 0);
   const netCenter = totalCollected - totalExpenses;
+  const inventorySalesTotal = inventoryTransactions
+    .filter((t) => t.type === 'sale')
+    .reduce((s, t) => s + t.totalAmount, 0);
+  const paidPayrollTotal = staffPayrolls
+    .filter((p) => p.status === 'paid')
+    .reduce((s, p) => s + p.netSalary, 0);
+  const closedShiftsCount = cashShifts.filter((s) => s.status === 'closed').length;
+  const convertedLeadsCount = leads.filter((l) => l.status === 'converted').length;
 
   const reportSessions = sessions.filter((s) => {
     if (groupFilter !== 'all' && s.groupId !== groupFilter) return false;
@@ -383,7 +458,7 @@ export const ReportsScreen: React.FC = () => {
     <div className="space-y-5">
       {/* Top Tabs + Locked State Simulator */}
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="inline-flex items-center gap-1 p-1 bg-white border border-[#E2E8F0] rounded-[8px] overflow-x-auto">
+        <div className="inline-flex flex-wrap items-center gap-1 p-1 bg-white border border-[#E2E8F0] rounded-[8px] overflow-x-auto">
           {(
             [
               { id: 'attendance', label: 'الحضور الشهري' },
@@ -392,6 +467,7 @@ export const ReportsScreen: React.FC = () => {
               ...(canViewTeacherShares
                 ? [{ id: 'teachers' as const, label: 'حسابات المدرسين' }]
                 : []),
+              { id: 'monthly_summary', label: 'التقرير الشهري التنفيذي' },
             ] as const
           ).map((item) => (
             <button
@@ -428,7 +504,9 @@ export const ReportsScreen: React.FC = () => {
                 disabled={isLocked}
                 icon={<Download className="w-4 h-4 text-[#0F766E]" />}
                 onClick={() => {
-                  const { filename, csv } = buildReportCsv(activeTab, {
+                  const csvTab =
+                    activeTab === 'monthly_summary' ? 'summary' : activeTab;
+                  const { filename, csv } = buildReportCsv(csvTab, {
                     payments,
                     expenses,
                     invoices,
@@ -726,6 +804,90 @@ export const ReportsScreen: React.FC = () => {
                 </table>
               </Card>
             )
+          )}
+
+          {activeTab === 'monthly_summary' && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                <Card className="p-4">
+                  <span className="text-xs text-[#5B6B80]">إجمالي التحصيل (الرسوم)</span>
+                  <span className="text-xl font-extrabold text-[#065F46] tabular-nums block mt-1">
+                    {formatEGP(totalCollected)}
+                  </span>
+                </Card>
+                <Card className="p-4">
+                  <span className="text-xs text-[#5B6B80]">مبيعات المذكرات والكتب</span>
+                  <span className="text-xl font-extrabold text-[#0F766E] tabular-nums block mt-1">
+                    {formatEGP(inventorySalesTotal)}
+                  </span>
+                </Card>
+                <Card className="p-4">
+                  <span className="text-xs text-[#5B6B80]">المصروفات والرواتب المصروفة</span>
+                  <span className="text-xl font-extrabold text-[#991B1B] tabular-nums block mt-1">
+                    {formatEGP(totalExpenses)}
+                  </span>
+                  <span className="text-[11px] text-[#5B6B80] tabular-nums">
+                    منها مرتبات: {formatEGP(paidPayrollTotal)}
+                  </span>
+                </Card>
+                <Card className="p-4">
+                  <span className="text-xs text-[#5B6B80]">الصافي التشغيلي التنفيذي</span>
+                  <span className="text-xl font-extrabold text-[#0F2A4A] tabular-nums block mt-1">
+                    {formatEGP(netCenter + inventorySalesTotal)}
+                  </span>
+                </Card>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <Card className="p-4 space-y-2">
+                  <h3 className="text-sm font-bold text-[#0F2A4A]">مؤشرات التشغيل والخزنة</h3>
+                  <div className="flex justify-between text-xs py-1.5 border-b border-[#E2E8F0]">
+                    <span className="text-[#5B6B80]">نسبة الحضور العامة</span>
+                    <strong className="tabular-nums text-[#0F766E]">{overallAttendanceRate}%</strong>
+                  </div>
+                  <div className="flex justify-between text-xs py-1.5 border-b border-[#E2E8F0]">
+                    <span className="text-[#5B6B80]">الورديات المقفولة (Z-Reports)</span>
+                    <strong className="tabular-nums">{formatNumber(closedShiftsCount)}</strong>
+                  </div>
+                  <div className="flex justify-between text-xs py-1.5">
+                    <span className="text-[#5B6B80]">فواتير متأخرة مفتوحة</span>
+                    <strong className="tabular-nums text-[#991B1B]">
+                      {formatNumber(overdueInvoices.length)}
+                    </strong>
+                  </div>
+                </Card>
+
+                <Card className="p-4 space-y-2">
+                  <h3 className="text-sm font-bold text-[#0F2A4A]">مؤشرات النمو والتسجيل</h3>
+                  <div className="flex justify-between text-xs py-1.5 border-b border-[#E2E8F0]">
+                    <span className="text-[#5B6B80]">الطلاب النشطون</span>
+                    <strong className="tabular-nums">
+                      {formatNumber(students.filter((s) => s.status === 'active').length)}
+                    </strong>
+                  </div>
+                  <div className="flex justify-between text-xs py-1.5 border-b border-[#E2E8F0]">
+                    <span className="text-[#5B6B80]">طلبات التسجيل الأونلاين</span>
+                    <strong className="tabular-nums">{formatNumber(leads.length)}</strong>
+                  </div>
+                  <div className="flex justify-between text-xs py-1.5">
+                    <span className="text-[#5B6B80]">الطلاب المحولون من الأونلاين</span>
+                    <strong className="tabular-nums text-[#0F766E]">
+                      {formatNumber(convertedLeadsCount)}
+                    </strong>
+                  </div>
+                </Card>
+
+                <Card className="p-4 space-y-2">
+                  <h3 className="text-sm font-bold text-[#0F2A4A]">إعداد التقرير التنفيذي</h3>
+                  <p className="text-xs text-[#5B6B80] leading-relaxed">
+                    يجمع هذا التقرير كافة التدفقات النقدية ومبيعات المذكرات ومؤشرات الانضباط الشهري لـ{' '}
+                    <strong>{centerSettings.name}</strong> للفترة من{' '}
+                    <span className="tabular-nums">{formatDateDDMMYYYY(fromDate)}</span> إلى{' '}
+                    <span className="tabular-nums">{formatDateDDMMYYYY(toDate)}</span>.
+                  </p>
+                </Card>
+              </div>
+            </div>
           )}
         </div>
 

@@ -4,10 +4,13 @@ import {
   AppNotification,
   Assessment,
   AssessmentGrade,
+  Assignment,
+  AssignmentSubmission,
   AttendanceEntry,
   AttendanceRecord,
   AttendanceSession,
   AuthSession,
+  CashRegisterShift,
   Center,
   CenterSettings,
   ConsentRecord,
@@ -15,20 +18,32 @@ import {
   Expense,
   FaceTemplateRecord,
   FileAssetRecord,
+  GamificationPointEntry,
   Group,
   Guardian,
+  InstallmentPlan,
   IntegrationConfig,
   IntegrationKey,
+  InventoryItem,
+  InventoryTransaction,
   Invoice,
+  LessonItem,
   ListStateMode,
   MessageTemplate,
+  OnlineExam,
+  OnlineExamAttempt,
+  OnlineExamQuestion,
   OutboxMessage,
   PaymentRecord,
+  RegistrationLead,
+  RegistrationLeadStatus,
   Room,
   ScheduledJobRunRecord,
   ScreenId,
   SettlementManualLine,
   SettlementRecord,
+  StaffAttendanceRecord,
+  StaffPayrollRecord,
   StandingDiscountConfig,
   Student,
   StudentDeviceSession,
@@ -95,6 +110,28 @@ import {
   defaultStorageProvider,
   processIncomingWebhook,
 } from '../features/integrations';
+import { gradeOnlineExamSubmission } from '../features/studentPortal/lessonsAndExams';
+import {
+  computeInvoiceSettlementPatch,
+  mapGatewayMethodToPaymentMethod,
+} from '../features/payments/parentCheckoutService';
+import { scanInvoicesForAutoReminders } from '../features/billing/autoReminderService';
+import {
+  computeClosingVariance,
+  computeShiftDrawerMetrics,
+} from '../features/finance/cashRegisterService';
+import {
+  applyInstallmentPayment,
+  buildInstallmentSchedule,
+} from '../features/finance/installmentsService';
+import { validateInventoryTransaction } from '../features/inventory/inventoryService';
+import {
+  generateLeadTicketCode,
+  PublicRegistrationInput,
+  validatePublicLeadForm,
+} from '../features/crm/registrationService';
+import { calculateNetPayroll } from '../features/payroll/staffPayrollService';
+import { formatMonthArabic } from '../features/billing/invoicesAndDiscounts';
 
 export interface ToastMessage {
   id: string;
@@ -114,6 +151,7 @@ const PUBLIC_SCREENS = new Set<ScreenId>([
   ScreenId.ONBOARDING,
   ScreenId.PARENT_PORTAL,
   ScreenId.STUDENT_LOGIN,
+  ScreenId.ONLINE_REGISTRATION,
 ]);
 
 interface EduflowContextValue {
@@ -218,6 +256,19 @@ interface EduflowContextValue {
   templates: MessageTemplate[];
   users: SystemUser[];
   centerSettings: CenterSettings;
+  lessons: LessonItem[];
+  onlineExams: OnlineExam[];
+  examAttempts: OnlineExamAttempt[];
+  assignments: Assignment[];
+  assignmentSubmissions: AssignmentSubmission[];
+  cashShifts: CashRegisterShift[];
+  inventoryItems: InventoryItem[];
+  inventoryTransactions: InventoryTransaction[];
+  leads: RegistrationLead[];
+  staffAttendance: StaffAttendanceRecord[];
+  staffPayrolls: StaffPayrollRecord[];
+  installmentPlans: InstallmentPlan[];
+  pointEntries: GamificationPointEntry[];
 
   // Phase 17: Integrations, Webhooks, Scheduler & Storage Foundation
   updateIntegrationConfig: (
@@ -424,6 +475,131 @@ interface EduflowContextValue {
   createAssessment: (data: Omit<Assessment, 'id' | 'centerId' | 'status' | 'grades'>) => Assessment;
   updateAssessmentGrades: (assessmentId: string, grades: AssessmentGrade[]) => void;
 
+  // 1) Lessons & Online Exams (Student Portal + Staff)
+  createLesson: (data: Omit<LessonItem, 'id' | 'centerId' | 'watchedByStudentIds' | 'createdAt'>) => LessonItem | null;
+  updateLesson: (id: string, patch: Partial<LessonItem>) => LessonItem | null;
+  toggleLessonPublished: (id: string) => void;
+  markLessonWatched: (lessonId: string) => void;
+  deleteLesson: (id: string) => void;
+  createOnlineExam: (data: {
+    title: string;
+    groupId: string;
+    teacherId: string;
+    durationMinutes: number;
+    passingScore: number;
+    published: boolean;
+    questions: OnlineExamQuestion[];
+  }) => OnlineExam | null;
+  toggleOnlineExamPublished: (id: string) => void;
+  submitOnlineExamAttempt: (examId: string, answers: number[]) => OnlineExamAttempt | null;
+
+  // 7) Assignments & Submissions
+  createAssignment: (data: Omit<Assignment, 'id' | 'centerId' | 'status' | 'createdAt'>) => Assignment | null;
+  toggleAssignmentStatus: (id: string) => void;
+  submitAssignmentAnswer: (payload: {
+    assignmentId: string;
+    answerText: string;
+    attachmentName?: string;
+  }) => AssignmentSubmission | null;
+  gradeAssignmentSubmission: (payload: {
+    submissionId: string;
+    score: number;
+    feedback?: string;
+  }) => AssignmentSubmission | null;
+
+  // 2) Parent Online Checkout
+  parentPayInvoiceOnline: (payload: {
+    invoiceId: string;
+    amount: number;
+    method: GatewayPaymentMethod;
+  }) => Promise<{ payment: PaymentRecord; webhookResult: WebhookProcessResult } | null>;
+
+  // 3 & 5) WhatsApp Cloud API & Auto Reminders
+  sendOutboxMessageViaCloudApi: (payload: {
+    messageId: string;
+    mode?: 'template' | 'text';
+    simulateStatus?: 'sent' | 'delivered' | 'read' | 'failed';
+  }) => Promise<{ ok: boolean; error?: string }>;
+  runAutoPaymentReminders: (manual?: boolean) => Promise<{ sentCount: number; skippedCount: number }>;
+
+  // 4) Cash Register
+  openCashShift: (openingBalance: number, note?: string) => CashRegisterShift | null;
+  closeCashShift: (payload: {
+    shiftId: string;
+    actualCountedCash: number;
+    note?: string;
+  }) => CashRegisterShift | null;
+
+  // 6) Inventory & Booklets
+  createInventoryItem: (data: Omit<InventoryItem, 'id' | 'centerId' | 'createdAt'>) => InventoryItem | null;
+  recordInventoryTransaction: (payload: {
+    itemId: string;
+    type: InventoryTransaction['type'];
+    qty: number;
+    studentId?: string;
+    paymentMethod?: PaymentRecord['method'];
+    note?: string;
+  }) => InventoryTransaction | null;
+
+  // 8) Online Registration & CRM
+  submitPublicRegistrationLead: (input: PublicRegistrationInput) => {
+    ok: boolean;
+    error?: string;
+    lead?: RegistrationLead;
+  };
+  updateLeadStatus: (leadId: string, status: RegistrationLeadStatus, notes?: string) => void;
+  convertLeadToStudent: (payload: {
+    leadId: string;
+    groupId?: string;
+    monthlyFee?: number;
+  }) => Student | null;
+
+  // 9) Staff Attendance & Payroll
+  recordStaffAttendance: (payload: {
+    userId: string;
+    date: string;
+    status: StaffAttendanceRecord['status'];
+    checkInTime?: string;
+    checkOutTime?: string;
+    note?: string;
+  }) => StaffAttendanceRecord | null;
+  generateOrUpdatePayroll: (payload: {
+    userId: string;
+    monthKey: string;
+    baseSalary: number;
+    bonuses: number;
+    deductions: number;
+    advances: number;
+    note?: string;
+  }) => StaffPayrollRecord | null;
+  payStaffPayroll: (payload: {
+    payrollId: string;
+    paymentMethod: PaymentRecord['method'];
+  }) => StaffPayrollRecord | null;
+
+  // 10) Installments & Gamification
+  createInstallmentPlan: (payload: {
+    studentId: string;
+    invoiceId?: string;
+    title: string;
+    totalAmount: number;
+    downPayment: number;
+    installmentsCount: number;
+    firstDueDate: string;
+  }) => InstallmentPlan | null;
+  payInstallmentItem: (payload: {
+    planId: string;
+    installmentId: string;
+    amount: number;
+    method: PaymentRecord['method'];
+  }) => InstallmentPlan | null;
+  awardStudentPoints: (payload: {
+    studentId: string;
+    points: number;
+    category: GamificationPointEntry['category'];
+    reason: string;
+  }) => GamificationPointEntry | null;
+
   // Notifications
   markAllNotificationsRead: () => void;
   markNotificationRead: (id: string) => void;
@@ -477,6 +653,7 @@ function parseScreenFromHash(hashStr: string): ScreenId | null {
   if (!clean) return null;
   if (clean === 'home') return ScreenId.LANDING;
   if (clean === 'signup') return ScreenId.ONBOARDING;
+  if (clean === 'register' || clean === 'online-registration') return ScreenId.ONLINE_REGISTRATION;
   if (clean === 'student' || clean === 'student-portal') return ScreenId.STUDENT_PORTAL;
   if (clean === 'student-login') return ScreenId.STUDENT_LOGIN;
   if (clean === 'parent' || clean === 'parent-portal') return ScreenId.PARENT_PORTAL;
@@ -503,6 +680,7 @@ function resolveInitialScreen(
   if (!requested && view) {
     if (view === 'home') requested = ScreenId.LANDING;
     else if (view === 'signup') requested = ScreenId.ONBOARDING;
+    else if (view === 'register' || view === 'online-registration') requested = ScreenId.ONLINE_REGISTRATION;
     else if (view === 'student' || view === 'student-portal') requested = ScreenId.STUDENT_PORTAL;
     else if (view === 'student-login') requested = ScreenId.STUDENT_LOGIN;
     else if (Object.values(ScreenId).includes(view as ScreenId)) {
@@ -732,6 +910,37 @@ export const EduflowProvider: React.FC<{ children: React.ReactNode }> = ({ child
     () => repositories.meta.getCenterSettings(),
     [syncTick, currentActor]
   );
+  const lessons = useMemo(() => repositories.lessons.list(), [syncTick, currentActor]);
+  const onlineExams = useMemo(() => repositories.onlineExams.list(), [syncTick, currentActor]);
+  const examAttempts = useMemo(() => repositories.examAttempts.list(), [syncTick, currentActor]);
+  const assignments = useMemo(() => repositories.assignments.list(), [syncTick, currentActor]);
+  const assignmentSubmissions = useMemo(
+    () => repositories.assignmentSubmissions.list(),
+    [syncTick, currentActor]
+  );
+  const cashShifts = useMemo(() => repositories.cashShifts.list(), [syncTick, currentActor]);
+  const inventoryItems = useMemo(
+    () => repositories.inventoryItems.list(),
+    [syncTick, currentActor]
+  );
+  const inventoryTransactions = useMemo(
+    () => repositories.inventoryTransactions.list(),
+    [syncTick, currentActor]
+  );
+  const leads = useMemo(() => repositories.leads.list(), [syncTick, currentActor]);
+  const staffAttendance = useMemo(
+    () => repositories.staffAttendance.list(),
+    [syncTick, currentActor]
+  );
+  const staffPayrolls = useMemo(
+    () => repositories.staffPayrolls.list(),
+    [syncTick, currentActor]
+  );
+  const installmentPlans = useMemo(
+    () => repositories.installmentPlans.list(),
+    [syncTick, currentActor]
+  );
+  const pointEntries = useMemo(() => repositories.pointEntries.list(), [syncTick, currentActor]);
   const scheduledJobs = useMemo(() => {
     if (!can(currentActor, 'view', 'scheduledJobs')) return [];
     const cid = currentActor?.centerId || DEFAULT_CENTER_ID;
@@ -3079,6 +3288,1147 @@ export const EduflowProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
   }, [authSession?.name, currentActor, currentRole, showToast]);
 
+  // 1) Lessons & Online Exams
+  const createLesson = useCallback<EduflowContextValue['createLesson']>(
+    (data) =>
+      runPermitted(() => {
+        const created = repositories.lessons.create({
+          ...data,
+          centerId: authSession?.centerId || DEFAULT_CENTER_ID,
+          watchedByStudentIds: [],
+          createdAt: new Date().toISOString(),
+        });
+        appendActivityLog({
+          action: 'lesson.create',
+          resource: 'lessons',
+          resourceId: created.id,
+          summary: `إضافة درس «${created.title}» للمنصة`,
+        });
+        showToast(`تمت إضافة الدرس «${created.title}» بنجاح`);
+        return created;
+      }, null),
+    [authSession?.centerId, appendActivityLog, runPermitted, showToast]
+  );
+
+  const updateLesson = useCallback<EduflowContextValue['updateLesson']>(
+    (id, patch) =>
+      runPermitted(() => {
+        const updated = repositories.lessons.update(id, patch);
+        if (updated) showToast('تم تحديث بيانات الدرس');
+        return updated || null;
+      }, null),
+    [runPermitted, showToast]
+  );
+
+  const toggleLessonPublished = useCallback(
+    (id: string) =>
+      runPermitted(() => {
+        const existing = repositories.lessons.get(id);
+        if (!existing) return;
+        const nextPub = !existing.published;
+        repositories.lessons.update(id, { published: nextPub });
+        showToast(nextPub ? 'تم نشر الدرس للطلاب' : 'تم إخفاء الدرس عن الطلاب', 'info');
+      }),
+    [runPermitted, showToast]
+  );
+
+  const markLessonWatched = useCallback(
+    (lessonId: string) => {
+      const sid = studentAuthSession?.studentId || currentActor?.studentId;
+      if (!sid) return;
+      runWithSystemActor(() => {
+        const lesson = repositories.lessons.get(lessonId);
+        if (!lesson) return;
+        const prevWatched = lesson.watchedByStudentIds || [];
+        if (prevWatched.includes(sid)) {
+          showToast('تم تسجيل مشاهدتك لهذا الدرس مسبقاً', 'info');
+          return;
+        }
+        repositories.lessons.update(lessonId, {
+          watchedByStudentIds: [...prevWatched, sid],
+        });
+        repositories.pointEntries.create({
+          centerId: lesson.centerId || DEFAULT_CENTER_ID,
+          studentId: sid,
+          points: 10,
+          category: 'bonus',
+          reason: `مشاهدة درس: ${lesson.title}`,
+          awardedBy: 'النظام التلقائي',
+          createdAt: new Date().toISOString(),
+        });
+      });
+      showToast('تم إتمام مشاهدة الدرس وإضافة +10 نقاط تحفيزية!');
+    },
+    [studentAuthSession?.studentId, currentActor?.studentId, showToast]
+  );
+
+  const deleteLesson = useCallback(
+    (id: string) =>
+      runPermitted(() => {
+        const before = repositories.lessons.get(id);
+        repositories.lessons.remove(id);
+        appendActivityLog({
+          action: 'lesson.delete',
+          resource: 'lessons',
+          resourceId: id,
+          summary: `حذف درس «${before?.title || id}»`,
+        });
+        showToast('تم حذف الدرس', 'info');
+      }),
+    [appendActivityLog, runPermitted, showToast]
+  );
+
+  const createOnlineExam = useCallback<EduflowContextValue['createOnlineExam']>(
+    (data) =>
+      runPermitted(() => {
+        const created = repositories.onlineExams.create({
+          ...data,
+          centerId: authSession?.centerId || DEFAULT_CENTER_ID,
+          createdAt: new Date().toISOString(),
+        });
+        appendActivityLog({
+          action: 'online_exam.create',
+          resource: 'onlineExams',
+          resourceId: created.id,
+          summary: `إنشاء امتحان أونلاين «${created.title}» (${created.questions.length} أسئلة)`,
+        });
+        showToast(`تم إنشاء الامتحان الأونلاين «${created.title}» بنجاح`);
+        return created;
+      }, null),
+    [authSession?.centerId, appendActivityLog, runPermitted, showToast]
+  );
+
+  const toggleOnlineExamPublished = useCallback(
+    (id: string) =>
+      runPermitted(() => {
+        const existing = repositories.onlineExams.get(id);
+        if (!existing) return;
+        const nextPub = !existing.published;
+        repositories.onlineExams.update(id, { published: nextPub });
+        showToast(nextPub ? 'تم نشر الامتحان للطلاب' : 'تم إغلاق نشر الامتحان', 'info');
+      }),
+    [runPermitted, showToast]
+  );
+
+  const submitOnlineExamAttempt = useCallback<EduflowContextValue['submitOnlineExamAttempt']>(
+    (examId, answers) =>
+      runPermitted(() => {
+        const sid = studentAuthSession?.studentId || currentActor?.studentId;
+        if (!sid) return null;
+        const exam = repositories.onlineExams.get(examId);
+        if (!exam) return null;
+        const graded = gradeOnlineExamSubmission(exam, answers);
+        const attempt = repositories.examAttempts.create({
+          centerId: exam.centerId || DEFAULT_CENTER_ID,
+          examId: exam.id,
+          studentId: sid,
+          answers,
+          score: graded.score,
+          maxScore: graded.maxScore,
+          passed: graded.passed,
+          submittedAt: new Date().toISOString(),
+        });
+        runWithSystemActor(() => {
+          repositories.pointEntries.create({
+            centerId: exam.centerId || DEFAULT_CENTER_ID,
+            studentId: sid,
+            points: graded.passed ? 25 : 10,
+            category: 'exam',
+            reason: `أداء امتحان: ${exam.title} (${graded.score}/${graded.maxScore})`,
+            awardedBy: 'تصحيح المنصة التلقائي',
+            createdAt: new Date().toISOString(),
+          });
+        });
+        appendActivityLog({
+          action: 'online_exam.submit',
+          resource: 'examAttempts',
+          resourceId: attempt.id,
+          summary: `تسليم امتحان «${exam.title}» بدرجة ${graded.score}/${graded.maxScore}`,
+        });
+        showToast(
+          graded.passed
+            ? `أحسنت! نجحت بدرجة ${graded.score} من ${graded.maxScore} (+25 نقطة)`
+            : `تم تسليم الامتحان: ${graded.score} من ${graded.maxScore}`,
+          graded.passed ? 'success' : 'info'
+        );
+        return attempt;
+      }, null),
+    [studentAuthSession?.studentId, currentActor?.studentId, appendActivityLog, runPermitted, showToast]
+  );
+
+  // 7) Assignments & Submissions
+  const createAssignment = useCallback<EduflowContextValue['createAssignment']>(
+    (data) =>
+      runPermitted(() => {
+        const created = repositories.assignments.create({
+          ...data,
+          centerId: authSession?.centerId || DEFAULT_CENTER_ID,
+          status: 'open',
+          createdAt: new Date().toISOString(),
+        });
+        appendActivityLog({
+          action: 'assignment.create',
+          resource: 'assignments',
+          resourceId: created.id,
+          summary: `إضافة واجب إلكتروني «${created.title}»`,
+        });
+        showToast(`تم نشر الواجب «${created.title}» بنجاح`);
+        return created;
+      }, null),
+    [authSession?.centerId, appendActivityLog, runPermitted, showToast]
+  );
+
+  const toggleAssignmentStatus = useCallback(
+    (id: string) =>
+      runPermitted(() => {
+        const existing = repositories.assignments.get(id);
+        if (!existing) return;
+        const nextStatus = existing.status === 'open' ? 'closed' : 'open';
+        repositories.assignments.update(id, { status: nextStatus });
+        showToast(nextStatus === 'open' ? 'تم فتح تسليم الواجب' : 'تم إغلاق تسليم الواجب', 'info');
+      }),
+    [runPermitted, showToast]
+  );
+
+  const submitAssignmentAnswer = useCallback<EduflowContextValue['submitAssignmentAnswer']>(
+    ({ assignmentId, answerText, attachmentName }) =>
+      runPermitted(() => {
+        const sid = studentAuthSession?.studentId || currentActor?.studentId;
+        if (!sid) return null;
+        if (!answerText.trim()) {
+          showToast('يرجى كتابة إجابة الواجب قبل الإرسال', 'error');
+          return null;
+        }
+        const existing = repositories.assignmentSubmissions
+          .list()
+          .find((s) => s.assignmentId === assignmentId && s.studentId === sid);
+        if (existing) {
+          const updated = repositories.assignmentSubmissions.update(existing.id, {
+            answerText: answerText.trim(),
+            attachmentName: attachmentName?.trim() || undefined,
+            submittedAt: new Date().toISOString(),
+          });
+          showToast('تم تحديث إجابة الواجب بنجاح');
+          return updated || null;
+        }
+        const created = repositories.assignmentSubmissions.create({
+          centerId: studentAuthSession?.centerId || DEFAULT_CENTER_ID,
+          assignmentId,
+          studentId: sid,
+          answerText: answerText.trim(),
+          attachmentName: attachmentName?.trim() || undefined,
+          submittedAt: new Date().toISOString(),
+          status: 'submitted',
+        });
+        showToast('تم تسليم الواجب بنجاح وبانتظار تقييم المدرس');
+        return created;
+      }, null),
+    [studentAuthSession, currentActor?.studentId, runPermitted, showToast]
+  );
+
+  const gradeAssignmentSubmission = useCallback<EduflowContextValue['gradeAssignmentSubmission']>(
+    ({ submissionId, score, feedback }) =>
+      runPermitted(() => {
+        const sub = repositories.assignmentSubmissions.get(submissionId);
+        if (!sub) return null;
+        const updated = repositories.assignmentSubmissions.update(submissionId, {
+          score,
+          feedback: feedback?.trim() || undefined,
+          status: 'graded',
+        });
+        if (updated) {
+          runWithSystemActor(() => {
+            repositories.pointEntries.create({
+              centerId: sub.centerId || DEFAULT_CENTER_ID,
+              studentId: sub.studentId,
+              points: 15,
+              category: 'assignment',
+              reason: `تصحيح واجب إلكتروني (درجة ${score})`,
+              awardedBy: authSession?.name || currentRole,
+              createdAt: new Date().toISOString(),
+            });
+          });
+          appendActivityLog({
+            action: 'assignment.grade',
+            resource: 'assignmentSubmissions',
+            resourceId: submissionId,
+            summary: `تقييم تسليم واجب بدرجة ${score}`,
+          });
+          showToast('تم رصد درجة الواجب وإضافة +15 نقطة للطالب');
+        }
+        return updated || null;
+      }, null),
+    [authSession?.name, currentRole, appendActivityLog, runPermitted, showToast]
+  );
+
+  // 2) Parent Online Checkout (Paymob / Wallet / Fawry)
+  const parentPayInvoiceOnline = useCallback<EduflowContextValue['parentPayInvoiceOnline']>(
+    async ({ invoiceId, amount, method }) => {
+      try {
+        const allStudents = repositories.students.list();
+        const inv = repositories.invoices.get(invoiceId);
+        if (!inv) {
+          showToast('الفاتورة المطلوبة غير موجودة.', 'error');
+          return null;
+        }
+        assertCan(currentActor, 'create', 'payments', {
+          studentId: inv.studentId,
+          students: allStudents,
+        });
+        const patch = computeInvoiceSettlementPatch(inv, amount);
+        if (!patch.ok) {
+          showToast(patch.error || 'تعذر تنفيذ عملية الدفع.', 'error');
+          return null;
+        }
+        const cid = inv.centerId || currentActor?.centerId || DEFAULT_CENTER_ID;
+        const checkout = await defaultMockPaymobProvider.createCheckout({
+          centerId: cid,
+          invoiceIds: [inv.id],
+          amount: patch.appliedAmount,
+          method,
+          returnUrl: typeof window !== 'undefined' ? window.location.href : '#/parent-portal',
+        });
+        let webhookResult: WebhookProcessResult | null = null;
+        await defaultMockPaymobProvider.simulateCheckoutOutcome(
+          checkout.txId,
+          'success',
+          async (signed) => {
+            webhookResult = await processIncomingWebhook(
+              repositories,
+              (body, sig) => defaultMockPaymobProvider.verifyWebhook(body, sig),
+              {
+                centerId: cid,
+                provider: 'paymob',
+                rawBody: signed.rawBody,
+                signature: signed.signature,
+              }
+            );
+          },
+          150
+        );
+
+        const mappedMethod = mapGatewayMethodToPaymentMethod(method);
+        const receipt = repositories.payments.create({
+          centerId: cid,
+          receiptNumber: `ONL-${Math.floor(10000 + Math.random() * 89999)}`,
+          invoiceId: inv.id,
+          studentId: inv.studentId,
+          groupId: inv.groupId,
+          amount: patch.appliedAmount,
+          remainingAfter: patch.remainingAfter,
+          method: mappedMethod,
+          date: new Date().toISOString().slice(0, 10),
+          recordedBy: `دفع أونلاين (${authSession?.name || 'ولي الأمر'})`,
+          note: `مرجع بوابة الدفع: ${checkout.orderId}`,
+        });
+
+        runWithSystemActor(() => {
+          repositories.invoices.update(inv.id, {
+            paid: patch.newPaid,
+            status: patch.nextStatus,
+            daysOverdue: patch.remainingAfter === 0 ? 0 : inv.daysOverdue,
+          });
+          repositories.students.update(inv.studentId, { paymentStatus: patch.nextStatus });
+          const st = allStudents.find((s) => s.id === inv.studentId);
+          repositories.notifications.create({
+            centerId: cid,
+            category: 'payments',
+            title: `دفع إلكتروني جديد — ${st?.name || 'طالب'}`,
+            body: `سدد ولي الأمر مبلغ ${patch.appliedAmount} ج أونلاين (${checkout.orderId}) لفاتورة ${inv.month}.`,
+            relativeTime: 'الآن',
+            isToday: true,
+            read: false,
+            targetScreen: ScreenId.PAYMENTS,
+            targetStudentId: inv.studentId,
+          });
+        });
+
+        appendActivityLog({
+          action: 'payment.parent_online',
+          resource: 'payments',
+          resourceId: receipt.id,
+          summary: `سداد ولي الأمر أونلاين ${patch.appliedAmount} ج لفاتورة ${inv.invoiceNumber} (${checkout.orderId})`,
+          before: { paid: inv.paid, status: inv.status },
+          after: { paid: patch.newPaid, status: patch.nextStatus, method: mappedMethod },
+        });
+
+        showToast(`تم الدفع بنجاح وإصدار إيصال رقم ${receipt.receiptNumber}`);
+        return {
+          payment: receipt,
+          webhookResult: webhookResult!,
+        };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'تعذر إتمام الدفع الإلكتروني.';
+        showToast(msg, 'error');
+        return null;
+      }
+    },
+    [authSession?.name, currentActor, appendActivityLog, showToast]
+  );
+
+  // 3 & 5) WhatsApp Cloud API + Auto Payment Reminders
+  const sendOutboxMessageViaCloudApi = useCallback<
+    EduflowContextValue['sendOutboxMessageViaCloudApi']
+  >(
+    async ({ messageId, mode = 'template', simulateStatus = 'delivered' }) => {
+      try {
+        assertCan(currentActor, 'send_whatsapp', 'messages');
+        const msg = repositories.messages.get(messageId);
+        if (!msg) return { ok: false, error: 'الرسالة غير موجودة.' };
+
+        const cid = msg.centerId || currentActor?.centerId || DEFAULT_CENTER_ID;
+        const sendRes =
+          mode === 'template'
+            ? await defaultMockWhatsAppProvider.sendTemplate({
+                to: msg.recipientPhone,
+                templateName: msg.templateId || 'center_notice_ar',
+                language: 'ar',
+                variables: { '1': msg.recipientName, '2': msg.body },
+              })
+            : await defaultMockWhatsAppProvider.sendText({
+                to: msg.recipientPhone,
+                body: msg.body,
+                lastInboundAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+              });
+
+        if (!sendRes.ok || !sendRes.messageId) {
+          repositories.messages.update(msg.id, {
+            status: 'failed',
+            deliveryStatus: 'failed',
+            errorAr: sendRes.errorAr || 'تعذر الإرسال عبر Cloud API',
+          });
+          showToast(sendRes.errorAr || 'فشل الإرسال عبر WhatsApp Cloud API', 'error');
+          return { ok: false, error: sendRes.errorAr };
+        }
+
+        const signed = await defaultMockWhatsAppProvider.buildSignedStatusWebhook({
+          messageId: sendRes.messageId,
+          recipientPhone: msg.recipientPhone,
+          status: simulateStatus,
+          errorCode: simulateStatus === 'failed' ? '131026' : undefined,
+        });
+
+        await processIncomingWebhook(
+          repositories,
+          (b, s) => defaultMockWhatsAppProvider.verifyWebhook(b, s),
+          {
+            centerId: cid,
+            provider: 'whatsapp',
+            rawBody: signed.rawBody,
+            signature: signed.signature,
+          }
+        );
+
+        const nextStatus = simulateStatus === 'failed' ? 'failed' : 'sent';
+        repositories.messages.update(msg.id, {
+          status: nextStatus,
+          deliveryStatus: simulateStatus,
+          providerMessageId: sendRes.messageId,
+          sentAt: new Date().toISOString(),
+          errorAr: simulateStatus === 'failed' ? 'فشل التسليم (131026)' : undefined,
+        });
+
+        appendActivityLog({
+          action: 'whatsapp.cloud_send',
+          resource: 'messages',
+          resourceId: msg.id,
+          summary: `إرسال رسالة عبر WhatsApp Cloud API إلى ${msg.recipientName} (${simulateStatus})`,
+        });
+
+        showToast(
+          simulateStatus === 'failed'
+            ? 'أرجع الـ Webhook حالة فشل تسليم الرسالة'
+            : `تم إرسال الرسالة عبر Cloud API (${simulateStatus})`
+        );
+        return { ok: true };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'فشل الإرسال عبر Cloud API.';
+        showToast(msg, 'error');
+        return { ok: false, error: msg };
+      }
+    },
+    [currentActor, appendActivityLog, showToast]
+  );
+
+  const runAutoPaymentReminders = useCallback<EduflowContextValue['runAutoPaymentReminders']>(
+    async (manual = true) => {
+      try {
+        assertCan(currentActor, 'send_whatsapp', 'messages');
+        const settings = repositories.meta.getCenterSettings();
+        const rule = settings.autoReminderRule || {
+          enabled: true,
+          daysOverdueThreshold: 1,
+          includePendingDueSoon: true,
+          channel: 'cloud_api' as const,
+        };
+        if (!rule.enabled) {
+          showToast('التذكيرات التلقائية متوقفة من الإعدادات', 'info');
+          return { sentCount: 0, skippedCount: 0 };
+        }
+        const tpl =
+          repositories.meta.getTemplates().find((t) => t.id === 'late_payment')?.body ||
+          'نذكّر ولي الأمر الكريم بسداد اشتراك {اسم_الطالب} بقيمة {المبلغ} ج.';
+        const todayIso = new Date().toISOString().slice(0, 10);
+        const allInvoices = repositories.invoices.list();
+        const candidates = scanInvoicesForAutoReminders({
+          invoices: allInvoices,
+          students: repositories.students.list(),
+          groups: repositories.groups.list(),
+          templateBody: tpl,
+          rule,
+          todayIso,
+        });
+
+        const cid = currentActor?.centerId || DEFAULT_CENTER_ID;
+        let sentCount = 0;
+
+        for (const item of candidates) {
+          let providerMessageId: string | undefined;
+          let deliveryStatus: OutboxMessage['deliveryStatus'];
+          if (rule.channel === 'cloud_api') {
+            const res = await defaultMockWhatsAppProvider.sendTemplate({
+              to: item.student.parentPhone,
+              templateName: 'late_payment_reminder_ar',
+              language: 'ar',
+              variables: { '1': item.student.name, '2': String(item.dueAmount) },
+            });
+            if (res.ok) {
+              providerMessageId = res.messageId;
+              deliveryStatus = 'delivered';
+            }
+          }
+          repositories.messages.create({
+            centerId: cid,
+            studentId: item.student.id,
+            recipientName: item.student.parentName,
+            recipientPhone: item.student.parentPhone,
+            channel: 'whatsapp',
+            templateId: 'late_payment',
+            body: item.body,
+            status: rule.channel === 'cloud_api' ? 'sent' : 'ready',
+            deliveryStatus,
+            providerMessageId,
+            createdAt: new Date().toISOString(),
+            sentAt: rule.channel === 'cloud_api' ? new Date().toISOString() : undefined,
+          });
+          repositories.invoices.update(item.invoice.id, {
+            lastReminderDate: todayIso,
+          });
+          sentCount += 1;
+        }
+
+        const totalUnpaid = allInvoices.filter((i) => i.total > i.paid && i.status !== 'paid').length;
+        const skippedCount = Math.max(0, totalUnpaid - sentCount);
+        const nowIso = new Date().toISOString();
+
+        runWithSystemActor(() => {
+          repositories.meta.setCenterSettings({
+            ...settings,
+            autoReminderRule: { ...rule, lastRunAt: nowIso },
+          });
+          repositories.notifications.create({
+            centerId: cid,
+            category: 'payments',
+            title: 'تنفيذ تذكيرات الدفع التلقائية',
+            body:
+              sentCount > 0
+                ? `تم تجهيز وإرسال ${sentCount} تذكير دفع لأولياء الأمور (${skippedCount} تم تخطيها).`
+                : 'لم توجد فواتير جديدة تستوجب تذكير اليوم.',
+            relativeTime: 'الآن',
+            isToday: true,
+            read: false,
+            targetScreen: ScreenId.LATE_PAYMENTS,
+          });
+        });
+
+        appendActivityLog({
+          action: 'reminders.auto_run',
+          resource: 'messages',
+          summary: `${manual ? 'تشغيل يدوي' : 'تشغيل مجدول'} لتذكيرات الدفع التلقائية: ${sentCount} رسالة`,
+          after: { sentCount, skippedCount, channel: rule.channel },
+        });
+        showToast(
+          sentCount > 0
+            ? `تم إرسال/تجهيز ${sentCount} تذكير سداد بنجاح`
+            : 'لا توجد فواتير مستحقة للتذكير الآن',
+          sentCount > 0 ? 'success' : 'info'
+        );
+        return { sentCount, skippedCount };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'تعذر تشغيل التذكيرات التلقائية.';
+        showToast(msg, 'error');
+        return { sentCount: 0, skippedCount: 0 };
+      }
+    },
+    [currentActor, appendActivityLog, showToast]
+  );
+
+  // 4) Cash Register Shifts
+  const openCashShift = useCallback<EduflowContextValue['openCashShift']>(
+    (openingBalance, note) =>
+      runPermitted(() => {
+        const openExisting = repositories.cashShifts.list().find((s) => s.status === 'open');
+        if (openExisting) {
+          showToast('توجد وردية خزنة مفتوحة بالفعل — أغلقها أولاً.', 'error');
+          return null;
+        }
+        const actorName = authSession?.name || currentRole;
+        const created = repositories.cashShifts.create({
+          centerId: authSession?.centerId || DEFAULT_CENTER_ID,
+          status: 'open',
+          openedAt: new Date().toISOString(),
+          openedBy: actorName,
+          openingBalance: Math.max(0, Number(openingBalance) || 0),
+          cashCollected: 0,
+          instapayCollected: 0,
+          walletCollected: 0,
+          bankCollected: 0,
+          expensesTotal: 0,
+          settlementsPaidTotal: 0,
+          expectedCashInDrawer: Math.max(0, Number(openingBalance) || 0),
+          note: note?.trim() || undefined,
+        });
+        appendActivityLog({
+          action: 'cash_shift.open',
+          resource: 'cashShifts',
+          resourceId: created.id,
+          summary: `فتح وردية الخزنة برصيد افتتاحي ${created.openingBalance} ج`,
+        });
+        showToast(`تم فتح وردية الخزنة برصيد ${created.openingBalance} ج`);
+        return created;
+      }, null),
+    [authSession?.centerId, authSession?.name, currentRole, appendActivityLog, runPermitted, showToast]
+  );
+
+  const closeCashShift = useCallback<EduflowContextValue['closeCashShift']>(
+    ({ shiftId, actualCountedCash, note }) =>
+      runPermitted(() => {
+        const shift = repositories.cashShifts.get(shiftId);
+        if (!shift || shift.status !== 'open') return null;
+        const closedAt = new Date().toISOString();
+        const metrics = computeShiftDrawerMetrics({
+          openingBalance: shift.openingBalance,
+          openedAtIso: shift.openedAt,
+          closedAtIso: closedAt,
+          payments: repositories.payments.list(),
+          expenses: repositories.expenses.list(),
+          settlements: repositories.settlements.list(),
+        });
+        const variance = computeClosingVariance(metrics.expectedCashInDrawer, actualCountedCash);
+        const actorName = authSession?.name || currentRole;
+        const updated = repositories.cashShifts.update(shift.id, {
+          status: 'closed',
+          closedAt,
+          closedBy: actorName,
+          cashCollected: metrics.cashCollected,
+          instapayCollected: metrics.instapayCollected,
+          walletCollected: metrics.walletCollected,
+          bankCollected: metrics.bankCollected,
+          expensesTotal: metrics.expensesTotal,
+          settlementsPaidTotal: metrics.settlementsPaidTotal,
+          expectedCashInDrawer: metrics.expectedCashInDrawer,
+          actualCountedCash,
+          variance,
+          note: note?.trim() || shift.note,
+        });
+        appendActivityLog({
+          action: 'cash_shift.close',
+          resource: 'cashShifts',
+          resourceId: shift.id,
+          summary: `تقفيل وردية الخزنة — المتوقع ${metrics.expectedCashInDrawer} ج / الفعلي ${actualCountedCash} ج (الفرق: ${variance} ج)`,
+          after: { expected: metrics.expectedCashInDrawer, actualCountedCash, variance },
+        });
+        showToast(
+          variance === 0
+            ? 'تم تقفيل اليومية والخزنة بمطابقة تامة (صفر فرق)'
+            : `تم تقفيل الخزنة مع تسجيل فرق قدره ${variance} ج`,
+          variance === 0 ? 'success' : 'info'
+        );
+        return updated || null;
+      }, null),
+    [authSession?.name, currentRole, appendActivityLog, runPermitted, showToast]
+  );
+
+  // 6) Inventory & Booklets
+  const createInventoryItem = useCallback<EduflowContextValue['createInventoryItem']>(
+    (data) =>
+      runPermitted(() => {
+        const created = repositories.inventoryItems.create({
+          ...data,
+          centerId: authSession?.centerId || DEFAULT_CENTER_ID,
+          createdAt: new Date().toISOString(),
+        });
+        appendActivityLog({
+          action: 'inventory.item_create',
+          resource: 'inventoryItems',
+          resourceId: created.id,
+          summary: `إضافة صنف مخزون «${created.name}» برصيد ${created.stockQty}`,
+        });
+        showToast(`تمت إضافة «${created.name}» للمخزون بنجاح`);
+        return created;
+      }, null),
+    [authSession?.centerId, appendActivityLog, runPermitted, showToast]
+  );
+
+  const recordInventoryTransaction = useCallback<EduflowContextValue['recordInventoryTransaction']>(
+    ({ itemId, type, qty, studentId, paymentMethod, note }) =>
+      runPermitted(() => {
+        const item = repositories.inventoryItems.get(itemId);
+        if (!item) return null;
+        const check = validateInventoryTransaction({ item, type, qty });
+        if (!check.ok) {
+          showToast(check.error || 'تعذر تنفيذ حركة المخزون.', 'error');
+          return null;
+        }
+        const st = studentId ? repositories.students.get(studentId) : undefined;
+        const totalAmount = type === 'sale' ? item.unitPrice * qty : type === 'restock' ? item.costPrice * qty : 0;
+        const actorName = authSession?.name || currentRole;
+        const tx = repositories.inventoryTransactions.create({
+          centerId: item.centerId || DEFAULT_CENTER_ID,
+          itemId: item.id,
+          itemName: item.name,
+          type,
+          qty,
+          unitPrice: item.unitPrice,
+          totalAmount,
+          studentId: st?.id,
+          studentName: st?.name,
+          paymentMethod,
+          handledBy: actorName,
+          date: new Date().toISOString().slice(0, 10),
+          note: note?.trim() || undefined,
+          createdAt: new Date().toISOString(),
+        });
+
+        repositories.inventoryItems.update(item.id, { stockQty: check.nextStockQty });
+
+        if (check.nextStockQty <= item.minStockAlert) {
+          runWithSystemActor(() => {
+            repositories.notifications.create({
+              centerId: item.centerId || DEFAULT_CENTER_ID,
+              category: 'system',
+              title: `تنبيه نقص مخزون: ${item.name}`,
+              body: `الرصيد المتبقي (${check.nextStockQty}) وصل إلى حد إعادة الطلب (${item.minStockAlert}).`,
+              relativeTime: 'الآن',
+              isToday: true,
+              read: false,
+              targetScreen: ScreenId.INVENTORY,
+            });
+          });
+        }
+
+        appendActivityLog({
+          action: `inventory.${type}`,
+          resource: 'inventoryTransactions',
+          resourceId: tx.id,
+          summary: `حركة مخزون (${type}) للصنف «${item.name}» × ${qty}${st ? ` — الطالب: ${st.name}` : ''}`,
+          before: { stockQty: item.stockQty },
+          after: { stockQty: check.nextStockQty, totalAmount },
+        });
+        showToast(
+          type === 'sale'
+            ? `تم بيع ${qty} × «${item.name}» بمبلغ ${totalAmount} ج`
+            : type === 'restock'
+            ? `تم توريد ${qty} قطعة إلى «${item.name}»`
+            : `تم تسجيل صرف ${qty} × «${item.name}»`
+        );
+        return tx;
+      }, null),
+    [authSession?.name, currentRole, appendActivityLog, runPermitted, showToast]
+  );
+
+  // 8) Public Online Registration & CRM
+  const submitPublicRegistrationLead = useCallback<
+    EduflowContextValue['submitPublicRegistrationLead']
+  >(
+    (input) => {
+      const check = validatePublicLeadForm(input);
+      if (!check.ok) {
+        return { ok: false, error: check.error };
+      }
+      const created = runWithSystemActor(() => {
+        const currentLeads = repositories.leads.list();
+        const ticketCode = generateLeadTicketCode(currentLeads.length);
+        const lead = repositories.leads.create({
+          centerId: DEFAULT_CENTER_ID,
+          ticketCode,
+          studentName: input.studentName.trim(),
+          stage: input.stage,
+          phone: input.phone.trim(),
+          parentName: input.parentName.trim(),
+          parentPhone: input.parentPhone.trim(),
+          preferredSubject: input.preferredSubject.trim(),
+          preferredGroupId: input.preferredGroupId || undefined,
+          source: 'online_form',
+          status: 'new',
+          notes: input.notes?.trim() || '',
+          createdAt: new Date().toISOString(),
+        });
+        repositories.notifications.create({
+          centerId: DEFAULT_CENTER_ID,
+          category: 'system',
+          title: `طلب تسجيل أونلاين جديد (${ticketCode})`,
+          body: `تقدّم الطالب ${lead.studentName} (${lead.stage}) بطلب التحاق لمادة ${lead.preferredSubject}.`,
+          relativeTime: 'الآن',
+          isToday: true,
+          read: false,
+          targetScreen: ScreenId.REGISTRATION_CRM,
+        });
+        repositories.activityLog.create({
+          centerId: DEFAULT_CENTER_ID,
+          actorId: 'public_form',
+          actorName: 'نموذج التسجيل الأونلاين',
+          actorRole: UserRole.RECEPTIONIST,
+          action: 'lead.public_submit',
+          resource: 'leads',
+          resourceId: lead.id,
+          summary: `طلب تسجيل أونلاين جديد: ${lead.studentName} (${ticketCode})`,
+          timestamp: new Date().toISOString(),
+        });
+        return lead;
+      });
+      showToast(`تم إرسال طلب التسجيل بنجاح! رقم المتابعة: ${created.ticketCode}`);
+      return { ok: true, lead: created };
+    },
+    [showToast]
+  );
+
+  const updateLeadStatus = useCallback<EduflowContextValue['updateLeadStatus']>(
+    (leadId, status, notes) =>
+      runPermitted(() => {
+        const existing = repositories.leads.get(leadId);
+        if (!existing) return;
+        repositories.leads.update(leadId, {
+          status,
+          ...(typeof notes === 'string' ? { notes } : {}),
+        });
+        appendActivityLog({
+          action: 'lead.status_update',
+          resource: 'leads',
+          resourceId: leadId,
+          summary: `تحديث حالة طلب التسجيل ${existing.ticketCode} إلى (${status})`,
+          before: { status: existing.status },
+          after: { status },
+        });
+        showToast('تم تحديث حالة الطلب بنجاح');
+      }),
+    [appendActivityLog, runPermitted, showToast]
+  );
+
+  const convertLeadToStudent = useCallback<EduflowContextValue['convertLeadToStudent']>(
+    ({ leadId, groupId, monthlyFee }) =>
+      runPermitted(() => {
+        const lead = repositories.leads.get(leadId);
+        if (!lead) return null;
+        if (lead.status === 'converted' && lead.convertedStudentId) {
+          showToast('تم تحويل هذا الطلب لطالب مسجل مسبقاً', 'info');
+          return repositories.students.get(lead.convertedStudentId) || null;
+        }
+        const cid = lead.centerId || authSession?.centerId || DEFAULT_CENTER_ID;
+        const targetGroupId = groupId || lead.preferredGroupId || '';
+        const targetGroup = targetGroupId ? repositories.groups.get(targetGroupId) : undefined;
+        const student = repositories.students.create({
+          centerId: cid,
+          code: '',
+          name: lead.studentName,
+          fullName: lead.studentName,
+          stage: lead.stage,
+          phone: lead.phone,
+          parentName: lead.parentName,
+          parentPhone: lead.parentPhone,
+          parent: { name: lead.parentName, phone: lead.parentPhone },
+          groupIds: targetGroup ? [targetGroup.id] : [],
+          status: 'active',
+          paymentStatus: 'pending',
+          lastAttendance: 'لم يحضر بعد',
+          attendanceRate: 100,
+          notes: lead.notes
+            ? [
+                {
+                  id: `n-${Date.now()}`,
+                  date: formatDateDDMMYYYY(new Date()),
+                  author: authSession?.name || currentRole,
+                  text: `ملاحظة التسجيل الأونلاين (${lead.ticketCode}): ${lead.notes}`,
+                },
+              ]
+            : [],
+          createdAt: new Date().toISOString(),
+        });
+
+        // Create initial invoice if monthlyFee > 0 or group has monthlyPrice
+        const effectiveFee = Number(monthlyFee) || targetGroup?.monthlyPrice || 0;
+        if (effectiveFee > 0) {
+          const monthKey = new Date().toISOString().slice(0, 7);
+          const monthLabel = formatMonthArabic(monthKey);
+          const invNum = `INV-${monthKey.replace('-', '')}-${repositories.invoices.list().length + 111}`;
+          runWithSystemActor(() => {
+            repositories.invoices.create({
+              centerId: cid,
+              number: invNum,
+              invoiceNumber: invNum,
+              studentId: student.id,
+              groupId: targetGroup?.id || 'general',
+              month: monthLabel,
+              monthKey,
+              baseAmount: effectiveFee,
+              discountLines: [],
+              netAmount: effectiveFee,
+              dueDate: `${monthKey}-05`,
+              daysOverdue: 0,
+              total: effectiveFee,
+              paid: 0,
+              status: 'pending',
+              createdAt: new Date().toISOString(),
+            });
+          });
+        }
+
+        repositories.leads.update(lead.id, {
+          status: 'converted',
+          convertedStudentId: student.id,
+        });
+
+        appendActivityLog({
+          action: 'lead.convert_to_student',
+          resource: 'leads',
+          resourceId: lead.id,
+          summary: `تحويل طلب التسجيل ${lead.ticketCode} إلى طالب رسمي «${student.name}» (${student.code})`,
+          after: { studentId: student.id, studentCode: student.code },
+        });
+        showToast(`تم تسجيل «${student.name}» كطالب فعلي بكود ${student.code}`);
+        return student;
+      }, null),
+    [authSession?.centerId, authSession?.name, currentRole, appendActivityLog, runPermitted, showToast]
+  );
+
+  // 9) Staff Attendance & Payroll
+  const recordStaffAttendance = useCallback<EduflowContextValue['recordStaffAttendance']>(
+    ({ userId, date, status, checkInTime, checkOutTime, note }) =>
+      runPermitted(() => {
+        const user = repositories.users.get(userId);
+        if (!user) return null;
+        const actorName = authSession?.name || currentRole;
+        const existing = repositories.staffAttendance
+          .list()
+          .find((r) => r.userId === userId && r.date === date);
+        if (existing) {
+          const updated = repositories.staffAttendance.update(existing.id, {
+            status,
+            checkInTime: checkInTime || existing.checkInTime,
+            checkOutTime: checkOutTime || existing.checkOutTime,
+            note: note?.trim() || existing.note,
+            recordedBy: actorName,
+          });
+          showToast(`تم تحديث حضور الموظف ${user.name}`);
+          return updated || null;
+        }
+        const created = repositories.staffAttendance.create({
+          centerId: authSession?.centerId || DEFAULT_CENTER_ID,
+          userId: user.id,
+          staffName: user.name,
+          role: user.role,
+          date,
+          checkInTime,
+          checkOutTime,
+          status,
+          note: note?.trim() || undefined,
+          recordedBy: actorName,
+        });
+        showToast(`تم تسجيل حضور ${user.name} ليوم ${date}`);
+        return created;
+      }, null),
+    [authSession?.centerId, authSession?.name, currentRole, runPermitted, showToast]
+  );
+
+  const generateOrUpdatePayroll = useCallback<EduflowContextValue['generateOrUpdatePayroll']>(
+    ({ userId, monthKey, baseSalary, bonuses, deductions, advances, note }) =>
+      runPermitted(() => {
+        const user = repositories.users.get(userId);
+        if (!user) return null;
+        const netSalary = calculateNetPayroll({ baseSalary, bonuses, deductions, advances });
+        const monthLabel = formatMonthArabic(monthKey);
+        const existing = repositories.staffPayrolls
+          .list()
+          .find((p) => p.userId === userId && p.monthKey === monthKey);
+        if (existing) {
+          const updated = repositories.staffPayrolls.update(existing.id, {
+            baseSalary,
+            bonuses,
+            deductions,
+            advances,
+            netSalary,
+            note: note?.trim() || undefined,
+          });
+          showToast(`تم تحديث مسيّر راتب ${user.name} لشهر ${monthLabel}`);
+          return updated || null;
+        }
+        const created = repositories.staffPayrolls.create({
+          centerId: authSession?.centerId || DEFAULT_CENTER_ID,
+          userId: user.id,
+          staffName: user.name,
+          role: user.role,
+          monthKey,
+          monthLabel,
+          baseSalary,
+          bonuses,
+          deductions,
+          advances,
+          netSalary,
+          status: 'pending',
+          note: note?.trim() || undefined,
+        });
+        showToast(`تم إعداد راتب ${user.name} لشهر ${monthLabel} بصافي ${netSalary} ج`);
+        return created;
+      }, null),
+    [authSession?.centerId, runPermitted, showToast]
+  );
+
+  const payStaffPayroll = useCallback<EduflowContextValue['payStaffPayroll']>(
+    ({ payrollId, paymentMethod }) =>
+      runPermitted(() => {
+        const payroll = repositories.staffPayrolls.get(payrollId);
+        if (!payroll || payroll.status === 'paid') return null;
+        const actorName = authSession?.name || currentRole;
+        const paidAt = new Date().toISOString().slice(0, 10);
+        const updated = repositories.staffPayrolls.update(payroll.id, {
+          status: 'paid',
+          paidAt,
+          paymentMethod,
+          paidBy: actorName,
+        });
+        if (payroll.netSalary > 0) {
+          runWithSystemActor(() => {
+            repositories.expenses.create({
+              centerId: payroll.centerId || DEFAULT_CENTER_ID,
+              date: paidAt,
+              category: 'رواتب',
+              description: `صرف راتب ${payroll.staffName} (${payroll.role}) — ${payroll.monthLabel}`,
+              amount: payroll.netSalary,
+              addedBy: actorName,
+            });
+          });
+        }
+        appendActivityLog({
+          action: 'payroll.pay',
+          resource: 'staffPayrolls',
+          resourceId: payroll.id,
+          summary: `صرف راتب ${payroll.staffName} لشهر ${payroll.monthLabel} بصافي ${payroll.netSalary} ج`,
+        });
+        showToast(`تم صرف راتب ${payroll.staffName} وتسجيله كمصروف رواتب`);
+        return updated || null;
+      }, null),
+    [authSession?.name, currentRole, appendActivityLog, runPermitted, showToast]
+  );
+
+  // 10) Installments & Gamification
+  const createInstallmentPlan = useCallback<EduflowContextValue['createInstallmentPlan']>(
+    ({ studentId, invoiceId, title, totalAmount, downPayment, installmentsCount, firstDueDate }) =>
+      runPermitted(() => {
+        const schedule = buildInstallmentSchedule({
+          totalAmount,
+          downPayment,
+          installmentsCount,
+          firstDueDate,
+        });
+        if (!schedule.ok) {
+          showToast(schedule.error || 'تعذر إنشاء خطة التقسيط.', 'error');
+          return null;
+        }
+        const actorName = authSession?.name || currentRole;
+        const plan = repositories.installmentPlans.create({
+          centerId: authSession?.centerId || DEFAULT_CENTER_ID,
+          studentId,
+          invoiceId: invoiceId || undefined,
+          title: title.trim() || 'خطة تقسيط مصروفات',
+          totalAmount,
+          downPayment,
+          installments: schedule.installments,
+          createdBy: actorName,
+          createdAt: new Date().toISOString(),
+        });
+        appendActivityLog({
+          action: 'installments.create',
+          resource: 'installmentPlans',
+          resourceId: plan.id,
+          summary: `إنشاء خطة تقسيط «${plan.title}» (${installmentsCount} أقساط بإجمالي ${totalAmount} ج)`,
+        });
+        showToast(`تم إنشاء خطة التقسيط بعدد ${installmentsCount} أقساط بنجاح`);
+        return plan;
+      }, null),
+    [authSession?.centerId, authSession?.name, currentRole, appendActivityLog, runPermitted, showToast]
+  );
+
+  const payInstallmentItem = useCallback<EduflowContextValue['payInstallmentItem']>(
+    ({ planId, installmentId, amount, method }) =>
+      runPermitted(() => {
+        const plan = repositories.installmentPlans.get(planId);
+        if (!plan) return null;
+        const receiptNumber = `INS-${Math.floor(1000 + Math.random() * 8999)}`;
+        const res = applyInstallmentPayment({
+          plan,
+          installmentId,
+          amount,
+          paidAtIso: new Date().toISOString().slice(0, 10),
+          receiptNumber,
+        });
+        if (!res.ok) {
+          showToast(res.error || 'تعذر تحصيل القسط.', 'error');
+          return null;
+        }
+        const updated = repositories.installmentPlans.update(plan.id, {
+          installments: res.updatedInstallments,
+        });
+        if (plan.invoiceId) {
+          const inv = repositories.invoices.get(plan.invoiceId);
+          if (inv && inv.total > inv.paid) {
+            const applied = Math.min(res.appliedAmount, inv.total - inv.paid);
+            recordPayment({
+              invoiceId: inv.id,
+              amount: applied,
+              method,
+              date: new Date().toISOString().slice(0, 10),
+              note: `سداد قسط من خطة: ${plan.title}`,
+            });
+          }
+        }
+        appendActivityLog({
+          action: 'installments.pay',
+          resource: 'installmentPlans',
+          resourceId: plan.id,
+          summary: `تحصيل قسط بقيمة ${res.appliedAmount} ج (${receiptNumber}) من خطة «${plan.title}»`,
+        });
+        showToast(`تم تحصيل القسط وإصدار مرجع رقم ${receiptNumber}`);
+        return updated || null;
+      }, null),
+    [appendActivityLog, recordPayment, runPermitted, showToast]
+  );
+
+  const awardStudentPoints = useCallback<EduflowContextValue['awardStudentPoints']>(
+    ({ studentId, points, category, reason }) =>
+      runPermitted(() => {
+        const st = repositories.students.get(studentId);
+        if (!st) return null;
+        const created = repositories.pointEntries.create({
+          centerId: st.centerId || DEFAULT_CENTER_ID,
+          studentId: st.id,
+          points,
+          category,
+          reason: reason.trim() || 'مكافأة تميز',
+          awardedBy: authSession?.name || currentRole,
+          createdAt: new Date().toISOString(),
+        });
+        appendActivityLog({
+          action: 'gamification.award',
+          resource: 'pointEntries',
+          resourceId: created.id,
+          summary: `${points >= 0 ? 'منح' : 'خصم'} ${points} نقطة للطالب «${st.name}» — ${created.reason}`,
+        });
+        showToast(`تم تسجيل ${points} نقطة للطالب «${st.name}»`);
+        return created;
+      }, null),
+    [authSession?.name, currentRole, appendActivityLog, runPermitted, showToast]
+  );
+
   const togglePlanFeatureOverride = useCallback<
     EduflowContextValue['togglePlanFeatureOverride']
   >(
@@ -3174,6 +4524,19 @@ export const EduflowProvider: React.FC<{ children: React.ReactNode }> = ({ child
         templates,
         users,
         centerSettings,
+        lessons,
+        onlineExams,
+        examAttempts,
+        assignments,
+        assignmentSubmissions,
+        cashShifts,
+        inventoryItems,
+        inventoryTransactions,
+        leads,
+        staffAttendance,
+        staffPayrolls,
+        installmentPlans,
+        pointEntries,
         updateIntegrationConfig,
         testIntegrationConnection,
         startMockPaymobCheckout,
@@ -3240,6 +4603,34 @@ export const EduflowProvider: React.FC<{ children: React.ReactNode }> = ({ child
         deleteExpense,
         createAssessment,
         updateAssessmentGrades,
+        createLesson,
+        updateLesson,
+        toggleLessonPublished,
+        markLessonWatched,
+        deleteLesson,
+        createOnlineExam,
+        toggleOnlineExamPublished,
+        submitOnlineExamAttempt,
+        createAssignment,
+        toggleAssignmentStatus,
+        submitAssignmentAnswer,
+        gradeAssignmentSubmission,
+        parentPayInvoiceOnline,
+        sendOutboxMessageViaCloudApi,
+        runAutoPaymentReminders,
+        openCashShift,
+        closeCashShift,
+        createInventoryItem,
+        recordInventoryTransaction,
+        submitPublicRegistrationLead,
+        updateLeadStatus,
+        convertLeadToStudent,
+        recordStaffAttendance,
+        generateOrUpdatePayroll,
+        payStaffPayroll,
+        createInstallmentPlan,
+        payInstallmentItem,
+        awardStudentPoints,
         markAllNotificationsRead,
         markNotificationRead,
         updateCenterSettings,

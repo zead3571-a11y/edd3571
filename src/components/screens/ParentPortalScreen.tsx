@@ -4,7 +4,9 @@ import {
   ArrowRight,
   Bell,
   BookOpen,
+  CheckCircle2,
   CheckSquare,
+  CreditCard,
   FileText,
   Home,
   LogOut,
@@ -13,7 +15,9 @@ import {
   Wallet,
 } from 'lucide-react';
 import { useEduflow } from '../../context/EduflowContext';
-import { ScreenId, UserRole } from '../../types/eduflow';
+import { Invoice, ScreenId, UserRole } from '../../types/eduflow';
+import { GatewayPaymentMethod } from '../../features/integrations';
+import { isPlanFeatureEnabled } from '../../data/seedData';
 import {
   Button,
   Card,
@@ -21,6 +25,7 @@ import {
   EmptyState,
   Field,
   InitialAvatar,
+  Modal,
   SelectInput,
   StatusChip,
   TextInput,
@@ -48,6 +53,7 @@ export const ParentPortalScreen: React.FC = () => {
     centerSettings,
     loginWithCredentials,
     activateParentByPhone,
+    parentPayInvoiceOnline,
     logout,
     openPdfExport,
     navigate,
@@ -61,6 +67,22 @@ export const ParentPortalScreen: React.FC = () => {
     'attendance'
   );
   const [previewGuardianId, setPreviewGuardianId] = useState<string>('');
+
+  const [checkoutInvoice, setCheckoutInvoice] = useState<Invoice | null>(null);
+  const [checkoutAmount, setCheckoutAmount] = useState('');
+  const [checkoutMethod, setCheckoutMethod] = useState<GatewayPaymentMethod>('card');
+  const [checkoutLoading, setCheckoutLoading] = useState(false);
+  const [lastOnlineReceipt, setLastOnlineReceipt] = useState<{
+    receiptNumber: string;
+    amount: number;
+    method: string;
+  } | null>(null);
+
+  const onlinePaymentsEnabled = isPlanFeatureEnabled(
+    centerSettings.currentPlanId,
+    'parentPayments',
+    centerSettings
+  );
 
   const isOwnerPreview = authSession?.role === UserRole.OWNER;
   const activePreviewGuardianId =
@@ -604,6 +626,25 @@ export const ParentPortalScreen: React.FC = () => {
             {/* Payments Tab */}
             {childTab === 'payments' && (
               <div className="space-y-4">
+                {lastOnlineReceipt && (
+                  <Card className="p-4 bg-[#D1FAE5]/40 border-emerald-300 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2.5 text-sm text-[#065F46]">
+                      <CheckCircle2 className="w-5 h-5 shrink-0" />
+                      <span>
+                        تم الدفع أونلاين بنجاح — إيصال <strong>#{lastOnlineReceipt.receiptNumber}</strong> بمبلغ{' '}
+                        <strong className="tabular-nums">{formatEGP(lastOnlineReceipt.amount)}</strong>
+                      </span>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => setLastOnlineReceipt(null)}
+                    >
+                      إخفاء
+                    </Button>
+                  </Card>
+                )}
+
                 <h3 className="text-base font-bold text-[#0F2A4A]">الفواتير المستحقة</h3>
 
                 {childInvoices.length === 0 ? (
@@ -614,15 +655,36 @@ export const ParentPortalScreen: React.FC = () => {
                 ) : (
                   childInvoices.map((inv) => {
                     const ch = paymentStatusChipProps(inv.status);
+                    const remaining = Math.max(0, inv.total - inv.paid);
                     return (
-                      <Card key={inv.id} className="p-4 flex items-center justify-between">
+                      <Card
+                        key={inv.id}
+                        className="p-4 flex flex-wrap items-center justify-between gap-3"
+                      >
                         <div>
-                          <p className="text-base font-bold text-[#0F2A4A]">{inv.month}</p>
-                          <p className="text-xs text-[#5B6B80] tabular-nums">
-                            المتبقي: {formatEGP(inv.total - inv.paid)}
+                          <div className="flex items-center gap-2">
+                            <p className="text-base font-bold text-[#0F2A4A]">{inv.month}</p>
+                            <StatusChip tone={ch.tone} label={ch.label} />
+                          </div>
+                          <p className="text-xs text-[#5B6B80] tabular-nums mt-0.5">
+                            رقم الفاتورة: {inv.number} · المتبقي: {formatEGP(remaining)}
                           </p>
                         </div>
-                        <StatusChip tone={ch.tone} label={ch.label} />
+
+                        {remaining > 0 && onlinePaymentsEnabled && (
+                          <Button
+                            size="sm"
+                            variant="primary"
+                            icon={<CreditCard className="w-4 h-4" />}
+                            onClick={() => {
+                              setCheckoutInvoice(inv);
+                              setCheckoutAmount(String(remaining));
+                              setCheckoutMethod('card');
+                            }}
+                          >
+                            دفع أونلاين الآن
+                          </Button>
+                        )}
                       </Card>
                     );
                   })
@@ -732,7 +794,95 @@ export const ParentPortalScreen: React.FC = () => {
           </button>
         </div>
       </nav>
+
+      {/* Parent Online Checkout Modal */}
+      <Modal
+        open={Boolean(checkoutInvoice)}
+        onClose={() => setCheckoutInvoice(null)}
+        title="الدفع الإلكتروني الآمن (Paymob / فوري / محفظة)"
+      >
+        {checkoutInvoice && (
+          <form
+            onSubmit={async (e) => {
+              e.preventDefault();
+              const amt = Math.max(0, Number(checkoutAmount) || 0);
+              if (amt <= 0) return;
+              setCheckoutLoading(true);
+              try {
+                const res = await parentPayInvoiceOnline({
+                  invoiceId: checkoutInvoice.id,
+                  amount: amt,
+                  method: checkoutMethod,
+                });
+                if (res) {
+                  setLastOnlineReceipt({
+                    receiptNumber: res.payment.receiptNumber,
+                    amount: res.payment.amount,
+                    method: res.payment.method,
+                  });
+                  setCheckoutInvoice(null);
+                }
+              } finally {
+                setCheckoutLoading(false);
+              }
+            }}
+            className="space-y-4"
+          >
+            <div className="p-3.5 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] text-sm space-y-1">
+              <div className="font-bold text-[#0F2A4A]">
+                {activeChild?.name} — {checkoutInvoice.month}
+              </div>
+              <div className="text-xs text-[#5B6B80] tabular-nums">
+                الفاتورة {checkoutInvoice.number} · المستحق:{' '}
+                {formatEGP(Math.max(0, checkoutInvoice.total - checkoutInvoice.paid))}
+              </div>
+            </div>
+
+            <Field label="المبلغ المراد دفعه (ج)" required>
+              <TextInput
+                type="number"
+                min="1"
+                max={Math.max(1, checkoutInvoice.total - checkoutInvoice.paid)}
+                value={checkoutAmount}
+                onChange={(e) => setCheckoutAmount(e.target.value)}
+                className="tabular-nums font-bold"
+                required
+              />
+            </Field>
+
+            <Field label="وسيلة الدفع الإلكتروني" required>
+              <SelectInput
+                value={checkoutMethod}
+                onChange={(e) => setCheckoutMethod(e.target.value as GatewayPaymentMethod)}
+              >
+                <option value="card">بطاقة بنكية (Visa / Mastercard)</option>
+                <option value="wallet">محفظة إلكترونية (Vodafone Cash / InstaPay)</option>
+                <option value="fawry">كود دفع فوري (Fawry)</option>
+              </SelectInput>
+            </Field>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <Button
+                variant="secondary"
+                type="button"
+                onClick={() => setCheckoutInvoice(null)}
+              >
+                إلغاء
+              </Button>
+              <Button
+                variant="primary"
+                type="submit"
+                loading={checkoutLoading}
+                icon={<CreditCard className="w-4 h-4" />}
+              >
+                تأكيد السداد الإلكتروني
+              </Button>
+            </div>
+          </form>
+        )}
+      </Modal>
     </div>
   );
 };
+
 

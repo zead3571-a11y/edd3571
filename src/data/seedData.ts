@@ -2,8 +2,11 @@ import {
   ActivityLogEntry,
   AppNotification,
   Assessment,
+  Assignment,
+  AssignmentSubmission,
   AttendanceRecord,
   AttendanceSession,
+  CashRegisterShift,
   Center,
   CenterSettings,
   ConsentRecord,
@@ -11,17 +14,27 @@ import {
   Expense,
   FaceTemplateRecord,
   FileAssetRecord,
+  GamificationPointEntry,
   Group,
   Guardian,
+  InstallmentPlan,
   IntegrationConfig,
   IntegrationKey,
+  InventoryItem,
+  InventoryTransaction,
   Invoice,
+  LessonItem,
   MessageTemplate,
+  OnlineExam,
+  OnlineExamAttempt,
   OutboxMessage,
   PaymentRecord,
+  RegistrationLead,
   Room,
   ScheduledJobRunRecord,
   SettlementRecord,
+  StaffAttendanceRecord,
+  StaffPayrollRecord,
   Student,
   StudentDeviceSession,
   StudentGuardianLink,
@@ -271,6 +284,32 @@ export const INITIAL_SCHEDULED_JOB_RUNS: ScheduledJobRunRecord[] = [];
 
 export const INITIAL_FILE_ASSETS: FileAssetRecord[] = [];
 
+export const INITIAL_LESSONS: LessonItem[] = [];
+
+export const INITIAL_ONLINE_EXAMS: OnlineExam[] = [];
+
+export const INITIAL_EXAM_ATTEMPTS: OnlineExamAttempt[] = [];
+
+export const INITIAL_ASSIGNMENTS: Assignment[] = [];
+
+export const INITIAL_ASSIGNMENT_SUBMISSIONS: AssignmentSubmission[] = [];
+
+export const INITIAL_CASH_SHIFTS: CashRegisterShift[] = [];
+
+export const INITIAL_INVENTORY_ITEMS: InventoryItem[] = [];
+
+export const INITIAL_INVENTORY_TRANSACTIONS: InventoryTransaction[] = [];
+
+export const INITIAL_LEADS: RegistrationLead[] = [];
+
+export const INITIAL_STAFF_ATTENDANCE: StaffAttendanceRecord[] = [];
+
+export const INITIAL_STAFF_PAYROLLS: StaffPayrollRecord[] = [];
+
+export const INITIAL_INSTALLMENT_PLANS: InstallmentPlan[] = [];
+
+export const INITIAL_POINT_ENTRIES: GamificationPointEntry[] = [];
+
 export const INITIAL_NOTIFICATIONS: AppNotification[] = [];
 
 export const INITIAL_TEMPLATES: MessageTemplate[] = [
@@ -454,10 +493,10 @@ export const DEFAULT_INTEGRATIONS: Record<IntegrationKey, IntegrationConfig> = {
     key: 'ai',
     label: 'المساعد الذكي (Gemini API)',
     providerName: 'Google Gemini (Server-side)',
-    enabled: false,
-    mode: 'mock',
-    healthStatus: 'unconfigured',
-    lastMessage: 'جميع استدعاءات Gemini تمر عبر خادم آمن ولا تُعرض في الواجهة.',
+    enabled: true,
+    mode: 'production',
+    healthStatus: 'healthy',
+    lastMessage: 'جميع استدعاءات Gemini تمر عبر خادم Express الآمن على المسار /api/ai/assistant.',
   },
   storage: {
     key: 'storage',
@@ -498,6 +537,12 @@ export const INITIAL_CENTER_SETTINGS: CenterSettings = {
   },
   integrations: DEFAULT_INTEGRATIONS,
   planFeatureOverrides: {},
+  autoReminderRule: {
+    enabled: true,
+    daysOverdueThreshold: 1,
+    includePendingDueSoon: true,
+    channel: 'cloud_api',
+  },
 };
 
 export interface PlanFeatureFlags {

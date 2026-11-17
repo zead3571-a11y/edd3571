@@ -129,7 +129,14 @@ export const LoginScreen: React.FC = () => {
 
         <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-slate-400">
           <span>EDUFLOW لإدارة المراكز التعليمية — مصر</span>
-          <div className="flex items-center gap-4">
+          <div className="flex flex-wrap items-center gap-4">
+            <button
+              type="button"
+              onClick={() => navigate(ScreenId.ONLINE_REGISTRATION)}
+              className="text-teal-300 hover:underline font-semibold cursor-pointer"
+            >
+              تسجيل طالب أونلاين
+            </button>
             <button
               type="button"
               onClick={() => navigate(ScreenId.STUDENT_LOGIN)}

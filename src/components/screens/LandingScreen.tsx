@@ -55,6 +55,13 @@ export const LandingScreen: React.FC = () => {
               </button>
               <button
                 type="button"
+                onClick={() => navigate(ScreenId.ONLINE_REGISTRATION)}
+                className="hover:text-[#0F766E] font-bold text-[#0F766E] transition-colors cursor-pointer"
+              >
+                تسجيل طالب أونلاين
+              </button>
+              <button
+                type="button"
                 onClick={() => navigate(ScreenId.DASHBOARD)}
                 className="hover:text-[#0F766E] text-[#0F2A4A] transition-colors cursor-pointer"
               >
@@ -414,6 +421,13 @@ export const LandingScreen: React.FC = () => {
               className="hover:text-[#0F2A4A] cursor-pointer"
             >
               بوابة الطالب
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate(ScreenId.ONLINE_REGISTRATION)}
+              className="hover:text-[#0F2A4A] cursor-pointer"
+            >
+              تسجيل طالب أونلاين
             </button>
             <button
               type="button"

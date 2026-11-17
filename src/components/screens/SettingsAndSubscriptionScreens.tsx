@@ -23,7 +23,7 @@ import {
   X,
 } from 'lucide-react';
 import { useEduflow } from '../../context/EduflowContext';
-import { CenterSettings, MessageTemplate, ScreenId, UserRole } from '../../types/eduflow';
+import { CenterSettings, IntegrationKey, MessageTemplate, ScreenId, UserRole } from '../../types/eduflow';
 import { can, canAccessScreen } from '../../permissions/permissions';
 import {
   Button,
@@ -37,11 +37,14 @@ import {
 } from '../ui/Primitives';
 import {
   BILLING_HISTORY,
+  BooleanPlanFeatureKey,
+  DEFAULT_INTEGRATIONS,
+  PLAN_FEATURE_LABELS,
   SUBSCRIPTION_PLANS,
   getPlanConfig,
   isPlanFeatureEnabled,
 } from '../../data/seedData';
-import { formatEGP, interpolateTemplate } from '../../utils/eduflowLogic';
+import { formatEGP, formatNumber, interpolateTemplate } from '../../utils/eduflowLogic';
 
 // 19) Settings Screen (6 Secondary Tabs + Sticky Save Bar + Unsaved Warning + Data Backup/Restore)
 export const SettingsScreen: React.FC = () => {
@@ -69,6 +72,13 @@ export const SettingsScreen: React.FC = () => {
     studentPortalAvailable,
     invoices,
     payments,
+    webhookEvents,
+    scheduledJobs,
+    updateIntegrationConfig,
+    testIntegrationConnection,
+    runAllDueJobsNow,
+    runAutoPaymentReminders,
+    togglePlanFeatureOverride,
     exportBackupJson,
     validateBackupJson,
     importBackupJson,
@@ -79,7 +89,15 @@ export const SettingsScreen: React.FC = () => {
   } = useEduflow();
 
   const [tab, setTab] = useState<
-    'center' | 'users' | 'rooms' | 'templates' | 'receipts' | 'studentPortal' | 'data' | 'account'
+    | 'center'
+    | 'users'
+    | 'rooms'
+    | 'templates'
+    | 'receipts'
+    | 'studentPortal'
+    | 'integrations'
+    | 'data'
+    | 'account'
   >('center');
   const [pendingTab, setPendingTab] = useState<typeof tab | null>(null);
 
@@ -101,6 +119,11 @@ export const SettingsScreen: React.FC = () => {
         label: 'منصة الطالب',
         allowed: can(currentActor, 'update', 'settings'),
       },
+      {
+        id: 'integrations',
+        label: 'التكاملات والأتمتة',
+        allowed: can(currentActor, 'update', 'settings') || can(currentActor, 'view', 'integrations'),
+      },
       { id: 'data', label: 'البيانات', allowed: can(currentActor, 'manage_backup', 'backup') },
       { id: 'account', label: 'حسابي', allowed: true },
     ] as const
@@ -116,6 +139,20 @@ export const SettingsScreen: React.FC = () => {
   const [sessionDaysInput, setSessionDaysInput] = useState(
     String(centerSettings.studentSessionDays ?? 7)
   );
+  const [remEnabled, setRemEnabled] = useState(
+    centerSettings.autoReminderRule?.enabled ?? true
+  );
+  const [remDaysThreshold, setRemDaysThreshold] = useState(
+    String(centerSettings.autoReminderRule?.daysOverdueThreshold ?? 1)
+  );
+  const [remIncludePending, setRemIncludePending] = useState(
+    centerSettings.autoReminderRule?.includePendingDueSoon ?? true
+  );
+  const [remChannel, setRemChannel] = useState<'cloud_api' | 'outbox_only'>(
+    centerSettings.autoReminderRule?.channel || 'cloud_api'
+  );
+  const [testingIntegrationKey, setTestingIntegrationKey] = useState<IntegrationKey | null>(null);
+  const [runningJobsNow, setRunningJobsNow] = useState(false);
 
   // Tab 1: Center Info + Discount Policy + Settlement Basis
   const [cName, setCName] = useState(centerSettings.name);
@@ -1088,6 +1125,279 @@ export const SettingsScreen: React.FC = () => {
               </Card>
             </>
           )}
+        </div>
+      )}
+
+      {/* Tab: التكاملات والأتمتة (Paymob, WhatsApp Cloud, Auto Reminders, Push & Feature Flags) */}
+      {activeTab === 'integrations' && (
+        <div className="space-y-5 max-w-4xl">
+          {/* Integrations Health & Mode */}
+          <Card className="p-5 space-y-4">
+            <div>
+              <h3 className="text-base font-bold text-[#0F2A4A]">
+                بوابات الدفع والتكامل السحابي
+              </h3>
+              <p className="text-xs text-[#5B6B80] mt-0.5">
+                إدارة ربط Paymob و WhatsApp Cloud API والتخزين السحابي بين الوضع التجريبي والفعلي.
+              </p>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
+              {(Object.keys(centerSettings.integrations || DEFAULT_INTEGRATIONS) as IntegrationKey[]).map((key) => {
+                const cfg = (centerSettings.integrations || DEFAULT_INTEGRATIONS)[key];
+                return (
+                  <div
+                    key={key}
+                    className="p-4 rounded-[12px] border border-[#E2E8F0] bg-[#F8FAFC] space-y-3 flex flex-col justify-between"
+                  >
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-sm font-bold text-[#0F2A4A]">{cfg.label}</span>
+                        <StatusChip
+                          tone={cfg.healthStatus === 'healthy' ? 'success' : 'warning'}
+                          label={cfg.enabled ? 'مفعل' : 'متوقف'}
+                        />
+                      </div>
+                      <p className="text-[11px] text-[#5B6B80] leading-relaxed">
+                        {cfg.lastMessage}
+                      </p>
+                    </div>
+                    <div className="space-y-2 pt-2 border-t border-[#E2E8F0]">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-[#5B6B80]">الحالة:</span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            updateIntegrationConfig(key, { enabled: !cfg.enabled })
+                          }
+                          className={`px-2.5 py-1 rounded-[6px] font-bold cursor-pointer ${
+                            cfg.enabled
+                              ? 'bg-[#D1FAE5] text-[#065F46]'
+                              : 'bg-slate-200 text-[#475569]'
+                          }`}
+                        >
+                          {cfg.enabled ? 'مفعل (إيقاف)' : 'معطل (تفعيل)'}
+                        </button>
+                      </div>
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-[#5B6B80]">الوضع:</span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            updateIntegrationConfig(key, {
+                              mode: cfg.mode === 'mock' ? 'production' : 'mock',
+                            })
+                          }
+                          className="px-2.5 py-1 rounded-[6px] border border-[#E2E8F0] bg-white font-bold text-[#0F2A4A] cursor-pointer"
+                        >
+                          {cfg.mode === 'mock' ? 'تجريبي (Mock)' : 'إنتاجي (Live)'}
+                        </button>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        className="w-full"
+                        loading={testingIntegrationKey === key}
+                        onClick={async () => {
+                          setTestingIntegrationKey(key);
+                          await testIntegrationConnection(key);
+                          setTestingIntegrationKey(null);
+                        }}
+                      >
+                        فحص الاتصال الآن
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </Card>
+
+          {/* Auto Payment Reminders & Scheduled Jobs */}
+          <Card className="p-5 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h3 className="text-base font-bold text-[#0F2A4A]">
+                  قواعد تذكيرات الدفع التلقائية والمهام المجدولة
+                </h3>
+                <p className="text-xs text-[#5B6B80] mt-0.5">
+                  تحديد عتبة التأخير وقناة الإرسال، وتشغيل المهام الدورية وإشعارات التطبيق PWA Push.
+                </p>
+              </div>
+              <StatusChip
+                tone={remEnabled ? 'success' : 'neutral'}
+                label={remEnabled ? 'التذكير التلقائي مفعل' : 'متوقف'}
+              />
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <Field label="التنبيه بعد تأخر (أيام)" htmlFor="rem-days">
+                <TextInput
+                  id="rem-days"
+                  type="number"
+                  min={0}
+                  max={30}
+                  value={remDaysThreshold}
+                  onChange={(e) => setRemDaysThreshold(e.target.value)}
+                  className="tabular-nums"
+                />
+              </Field>
+              <Field label="قناة التذكير الافتراضية" htmlFor="rem-chan">
+                <SelectInput
+                  id="rem-chan"
+                  value={remChannel}
+                  onChange={(e) => setRemChannel(e.target.value as 'cloud_api' | 'outbox_only')}
+                >
+                  <option value="cloud_api">WhatsApp Cloud API تلقائي</option>
+                  <option value="outbox_only">تجهيز في صندوق روابط واتساب</option>
+                </SelectInput>
+              </Field>
+              <div className="flex flex-col justify-end gap-2">
+                <label className="inline-flex items-center gap-2 text-xs font-bold text-[#0F2A4A] cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={remEnabled}
+                    onChange={(e) => setRemEnabled(e.target.checked)}
+                    className="w-4 h-4 accent-[#0F766E]"
+                  />
+                  <span>تفعيل التذكيرات التلقائية</span>
+                </label>
+                <label className="inline-flex items-center gap-2 text-xs font-bold text-[#5B6B80] cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={remIncludePending}
+                    onChange={(e) => setRemIncludePending(e.target.checked)}
+                    className="w-4 h-4 accent-[#0F766E]"
+                  />
+                  <span>شمل الفواتير المستحقة قريباً</span>
+                </label>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2.5 pt-2 border-t border-[#E2E8F0]">
+              <Button
+                size="sm"
+                onClick={() =>
+                  updateCenterSettings({
+                    autoReminderRule: {
+                      enabled: remEnabled,
+                      daysOverdueThreshold: Math.max(0, Number(remDaysThreshold) || 1),
+                      includePendingDueSoon: remIncludePending,
+                      channel: remChannel,
+                    },
+                  })
+                }
+              >
+                حفظ سياسة التذكيرات
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => void runAutoPaymentReminders(true)}
+              >
+                تشغيل التذكيرات الآن
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                loading={runningJobsNow}
+                onClick={async () => {
+                  setRunningJobsNow(true);
+                  await runAllDueJobsNow();
+                  setRunningJobsNow(false);
+                }}
+              >
+                تشغيل المهام الدورية ({scheduledJobs.length})
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={async () => {
+                  if (typeof window !== 'undefined' && 'Notification' in window) {
+                    const perm =
+                      Notification.permission === 'default'
+                        ? await Notification.requestPermission().catch(() => 'denied')
+                        : Notification.permission;
+                    if (perm === 'granted') {
+                      new Notification(`EDUFLOW — ${centerSettings.name}`, {
+                        body: 'تم تفعيل تنبيهات التطبيق الفورية Push بنجاح لمتابعة المدفوعات والحضور.',
+                      });
+                      showToast('تم إرسال إشعار Push تجريبي للمتصفح');
+                      return;
+                    }
+                  }
+                  showToast('تم إرسال التنبيه الفوري داخل النظام (أذونات المتصفح غير متاحة هنا)');
+                }}
+              >
+                اختبار إشعار Push للتطبيق
+              </Button>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs pt-2">
+              <div className="p-3 rounded-[8px] border border-[#E2E8F0] bg-[#F8FAFC]">
+                <span className="text-[#5B6B80] block">سجل أحداث Webhook</span>
+                <span className="text-base font-bold text-[#0F2A4A] tabular-nums">
+                  {formatNumber(webhookEvents.length)} حدث
+                </span>
+              </div>
+              <div className="p-3 rounded-[8px] border border-[#E2E8F0] bg-[#F8FAFC]">
+                <span className="text-[#5B6B80] block">المهام المجدولة المسجلة</span>
+                <span className="text-base font-bold text-[#0F766E] tabular-nums">
+                  {formatNumber(scheduledJobs.length)} مهام
+                </span>
+              </div>
+              <div className="p-3 rounded-[8px] border border-[#E2E8F0] bg-[#F8FAFC] col-span-2 sm:col-span-1">
+                <span className="text-[#5B6B80] block">آخر فحص تلقائي</span>
+                <span className="text-sm font-bold text-[#0F2A4A] tabular-nums">
+                  {centerSettings.autoReminderRule?.lastRunAt
+                    ? new Date(centerSettings.autoReminderRule.lastRunAt).toLocaleDateString('en-GB')
+                    : 'لم يُشغّل بعد'}
+                </span>
+              </div>
+            </div>
+          </Card>
+
+          {/* Plan Feature Flags Manager (Owner Overrides) */}
+          <Card className="p-5 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h3 className="text-base font-bold text-[#0F2A4A]">
+                  مفاتيح المزايا المتقدمة للباقة الحالية ({getPlanConfig(centerSettings.currentPlanId).name})
+                </h3>
+                <p className="text-xs text-[#5B6B80] mt-0.5">
+                  يمكن لمالك السنتر تفعيل أو إيقاف أي ميزة على الباقة الحالية مباشرة للاختبار أو التشغيل.
+                </p>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+              {(Object.keys(PLAN_FEATURE_LABELS) as BooleanPlanFeatureKey[]).map((flagKey) => {
+                const enabled = isPlanFeatureEnabled(
+                  centerSettings.currentPlanId,
+                  flagKey,
+                  centerSettings
+                );
+                return (
+                  <button
+                    key={flagKey}
+                    type="button"
+                    onClick={() =>
+                      togglePlanFeatureOverride(centerSettings.currentPlanId, flagKey, !enabled)
+                    }
+                    className={`p-3 rounded-[10px] border text-right flex items-center justify-between gap-2 text-xs font-bold transition-colors cursor-pointer ${
+                      enabled
+                        ? 'bg-[#F0FDFA] border-[#0F766E]/40 text-[#0F2A4A]'
+                        : 'bg-white border-[#E2E8F0] text-[#5B6B80] hover:bg-slate-50'
+                    }`}
+                  >
+                    <span className="truncate">{PLAN_FEATURE_LABELS[flagKey]}</span>
+                    <StatusChip
+                      tone={enabled ? 'success' : 'neutral'}
+                      label={enabled ? 'مفعّل' : 'مغلق'}
+                    />
+                  </button>
+                );
+              })}
+            </div>
+          </Card>
         </div>
       )}
 

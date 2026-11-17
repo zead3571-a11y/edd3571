@@ -44,7 +44,7 @@ export function buildLatePaymentMessage(
     invoice: Invoice;
   }
 ): string {
-  const remaining = Math.max(0, params.invoice.netAmount - params.invoice.paid);
+  const remaining = Math.max(0, (params.invoice.netAmount ?? params.invoice.total) - params.invoice.paid);
   return interpolateTemplate(templateBody, {
     اسم_الطالب: params.student.name,
     المبلغ: String(remaining),

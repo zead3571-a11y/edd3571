@@ -42,6 +42,19 @@ import {
   StudentPortalScreen,
 } from './components/screens/StudentPortalScreens';
 import { DesignSystemScreen } from './components/screens/DesignSystemScreen';
+import {
+  CashRegisterScreen,
+  InstallmentsScreen,
+} from './components/screens/CashRegisterAndInstallmentsScreens';
+import {
+  InventoryScreen,
+  OnlineRegistrationScreen,
+  RegistrationCrmScreen,
+} from './components/screens/InventoryAndCrmScreens';
+import {
+  AiAssistantScreen,
+  StaffPayrollScreen,
+} from './components/screens/StaffPayrollAndAiScreens';
 
 import { canAccessScreen } from './permissions/permissions';
 import { AccessDeniedScreen } from './permissions/Can';
@@ -106,6 +119,20 @@ const ScreenRouter: React.FC = () => {
       return <StudentLoginScreen />;
     case ScreenId.STUDENT_PORTAL:
       return <StudentPortalScreen />;
+    case ScreenId.CASH_REGISTER:
+      return <CashRegisterScreen />;
+    case ScreenId.INSTALLMENTS:
+      return <InstallmentsScreen />;
+    case ScreenId.INVENTORY:
+      return <InventoryScreen />;
+    case ScreenId.REGISTRATION_CRM:
+      return <RegistrationCrmScreen />;
+    case ScreenId.ONLINE_REGISTRATION:
+      return <OnlineRegistrationScreen />;
+    case ScreenId.STAFF_PAYROLL:
+      return <StaffPayrollScreen />;
+    case ScreenId.AI_ASSISTANT:
+      return <AiAssistantScreen />;
     case ScreenId.DESIGN_SYSTEM:
       return <DesignSystemScreen />;
     default:
