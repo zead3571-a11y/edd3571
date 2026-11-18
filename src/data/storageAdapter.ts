@@ -27,8 +27,12 @@ import {
   OnlineExamAttempt,
   OutboxMessage,
   PaymentRecord,
+  PlatformSettings,
   RegistrationLead,
   Room,
+  SaasPaymentRecord,
+  SaasPlanConfig,
+  SaasSubscriptionRecord,
   ScheduledJobRunRecord,
   SettlementRecord,
   StaffAttendanceRecord,
@@ -69,8 +73,12 @@ import {
   INITIAL_NOTIFICATIONS,
   INITIAL_ONLINE_EXAMS,
   INITIAL_PAYMENTS,
+  INITIAL_PLATFORM_SETTINGS,
   INITIAL_POINT_ENTRIES,
   INITIAL_ROOMS,
+  INITIAL_SAAS_PAYMENTS,
+  INITIAL_SAAS_PLANS,
+  INITIAL_SAAS_SUBSCRIPTIONS,
   INITIAL_SCHEDULED_JOB_RUNS,
   INITIAL_SESSIONS,
   INITIAL_SETTLEMENTS,
@@ -87,7 +95,7 @@ import {
   STAGES_LIST,
 } from './seedData';
 
-export const CURRENT_SCHEMA_VERSION = 3;
+export const CURRENT_SCHEMA_VERSION = 4;
 
 export type EntityKey =
   | 'centers'
@@ -128,7 +136,9 @@ export type EntityKey =
   | 'staffAttendance'
   | 'staffPayrolls'
   | 'installmentPlans'
-  | 'pointEntries';
+  | 'pointEntries'
+  | 'saasSubscriptions'
+  | 'saasPayments';
 
 export interface EntityCollectionsMap {
   centers: Center[];
@@ -170,12 +180,16 @@ export interface EntityCollectionsMap {
   staffPayrolls: StaffPayrollRecord[];
   installmentPlans: InstallmentPlan[];
   pointEntries: GamificationPointEntry[];
+  saasSubscriptions: SaasSubscriptionRecord[];
+  saasPayments: SaasPaymentRecord[];
 }
 
 export interface EduflowMetaMap {
   stages: string[];
   templates: MessageTemplate[];
   centerSettings: CenterSettings;
+  saasPlans: SaasPlanConfig[];
+  platformSettings: PlatformSettings;
 }
 
 export interface EduflowBackupPayload {
@@ -227,6 +241,8 @@ export const ALL_ENTITY_KEYS: EntityKey[] = [
   'staffPayrolls',
   'installmentPlans',
   'pointEntries',
+  'saasSubscriptions',
+  'saasPayments',
 ];
 
 function deepClone<T>(val: T): T {
@@ -274,6 +290,8 @@ export function createInitialCollections(): EntityCollectionsMap {
     staffPayrolls: INITIAL_STAFF_PAYROLLS,
     installmentPlans: INITIAL_INSTALLMENT_PLANS,
     pointEntries: INITIAL_POINT_ENTRIES,
+    saasSubscriptions: INITIAL_SAAS_SUBSCRIPTIONS,
+    saasPayments: INITIAL_SAAS_PAYMENTS,
   });
 }
 
@@ -282,6 +300,8 @@ export function createInitialMeta(): EduflowMetaMap {
     stages: STAGES_LIST,
     templates: INITIAL_TEMPLATES,
     centerSettings: INITIAL_CENTER_SETTINGS,
+    saasPlans: INITIAL_SAAS_PLANS,
+    platformSettings: INITIAL_PLATFORM_SETTINGS,
   });
 }
 
@@ -398,7 +418,26 @@ export function migrateSnapshot(
     pointEntries: Array.isArray(rawCollections.pointEntries)
       ? rawCollections.pointEntries
       : defaults.pointEntries,
+    saasSubscriptions: Array.isArray(rawCollections.saasSubscriptions)
+      ? rawCollections.saasSubscriptions
+      : defaults.saasSubscriptions,
+    saasPayments: Array.isArray(rawCollections.saasPayments)
+      ? rawCollections.saasPayments
+      : defaults.saasPayments,
   };
+
+  // Ensure Super Admin user exists on migration from older v2/v3 browser snapshots
+  if (!merged.users.some((u) => u.id === 'u-superadmin' || u.email === 'superadmin@eduflow.eg')) {
+    const seededSuperAdmin = defaults.users.find((u) => u.id === 'u-superadmin');
+    if (seededSuperAdmin) {
+      merged.users = [seededSuperAdmin, ...merged.users];
+    }
+  }
+
+  merged.centers = merged.centers.map((c) => ({
+    ...c,
+    status: c.status || 'active',
+  }));
 
   if (fromVersion <= CURRENT_SCHEMA_VERSION) {
     merged.students = merged.students.map((st, idx) => {
@@ -495,6 +534,16 @@ export function migrateSnapshot(
             {},
         }
       : defaultMeta.centerSettings,
+    saasPlans:
+      Array.isArray(rawMeta.saasPlans) && rawMeta.saasPlans.length > 0
+        ? rawMeta.saasPlans
+        : defaultMeta.saasPlans,
+    platformSettings: rawMeta.platformSettings
+      ? {
+          ...defaultMeta.platformSettings,
+          ...rawMeta.platformSettings,
+        }
+      : defaultMeta.platformSettings,
   };
 
   return {

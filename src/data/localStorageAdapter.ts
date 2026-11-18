@@ -99,6 +99,10 @@ export class LocalStorageAdapter implements StorageAdapter {
     const centerSettings = this.safeReadJson<EduflowMetaMap['centerSettings']>(
       this.keyForMeta('centerSettings')
     );
+    const saasPlans = this.safeReadJson<EduflowMetaMap['saasPlans']>(this.keyForMeta('saasPlans'));
+    const platformSettings = this.safeReadJson<EduflowMetaMap['platformSettings']>(
+      this.keyForMeta('platformSettings')
+    );
     if (stages) {
       rawMeta.stages = stages;
       hasAnyPersisted = true;
@@ -109,6 +113,14 @@ export class LocalStorageAdapter implements StorageAdapter {
     }
     if (centerSettings) {
       rawMeta.centerSettings = centerSettings;
+      hasAnyPersisted = true;
+    }
+    if (saasPlans) {
+      rawMeta.saasPlans = saasPlans;
+      hasAnyPersisted = true;
+    }
+    if (platformSettings) {
+      rawMeta.platformSettings = platformSettings;
       hasAnyPersisted = true;
     }
 
@@ -134,6 +146,11 @@ export class LocalStorageAdapter implements StorageAdapter {
       this.writeImmediate(
         this.keyForMeta('centerSettings'),
         JSON.stringify(this.cacheMeta.centerSettings)
+      );
+      this.writeImmediate(this.keyForMeta('saasPlans'), JSON.stringify(this.cacheMeta.saasPlans));
+      this.writeImmediate(
+        this.keyForMeta('platformSettings'),
+        JSON.stringify(this.cacheMeta.platformSettings)
       );
       this.writeImmediate(SCHEMA_VERSION_KEY, String(CURRENT_SCHEMA_VERSION));
     }
@@ -365,6 +382,11 @@ export class LocalStorageAdapter implements StorageAdapter {
       this.keyForMeta('centerSettings'),
       JSON.stringify(this.cacheMeta.centerSettings)
     );
+    this.writeImmediate(this.keyForMeta('saasPlans'), JSON.stringify(this.cacheMeta.saasPlans));
+    this.writeImmediate(
+      this.keyForMeta('platformSettings'),
+      JSON.stringify(this.cacheMeta.platformSettings)
+    );
     this.writeImmediate(SCHEMA_VERSION_KEY, String(CURRENT_SCHEMA_VERSION));
 
     this.notifyListeners();
@@ -384,6 +406,11 @@ export class LocalStorageAdapter implements StorageAdapter {
     this.writeImmediate(
       this.keyForMeta('centerSettings'),
       JSON.stringify(this.cacheMeta.centerSettings)
+    );
+    this.writeImmediate(this.keyForMeta('saasPlans'), JSON.stringify(this.cacheMeta.saasPlans));
+    this.writeImmediate(
+      this.keyForMeta('platformSettings'),
+      JSON.stringify(this.cacheMeta.platformSettings)
     );
     this.writeImmediate(SCHEMA_VERSION_KEY, String(CURRENT_SCHEMA_VERSION));
 

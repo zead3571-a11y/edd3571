@@ -12,6 +12,7 @@ import {
   AuthSession,
   CashRegisterShift,
   Center,
+  CenterAccountStatus,
   CenterSettings,
   ConsentRecord,
   DiscountRecord,
@@ -35,9 +36,15 @@ import {
   OnlineExamQuestion,
   OutboxMessage,
   PaymentRecord,
+  PlatformSettings,
   RegistrationLead,
   RegistrationLeadStatus,
   Room,
+  SaasPaymentMethod,
+  SaasPaymentRecord,
+  SaasPlanConfig,
+  SaasSubscriptionRecord,
+  SaasSubscriptionStatus,
   ScheduledJobRunRecord,
   ScreenId,
   SettlementManualLine,
@@ -59,6 +66,7 @@ import {
   BooleanPlanFeatureKey,
   DEFAULT_CENTER_ID,
   DEFAULT_INTEGRATIONS,
+  PLATFORM_CENTER_ID,
   isStudentPortalEnabled,
 } from '../data/seedData';
 import {
@@ -132,6 +140,12 @@ import {
 } from '../features/crm/registrationService';
 import { calculateNetPayroll } from '../features/payroll/staffPayrollService';
 import { formatMonthArabic } from '../features/billing/invoicesAndDiscounts';
+import {
+  computeNextPeriodEndIso,
+  computeTrialEndDateIso,
+  validatePlatformSettingsPatch,
+  validateSaasPlanDraft,
+} from '../features/superAdmin/platformService';
 
 export interface ToastMessage {
   id: string;
@@ -269,6 +283,63 @@ interface EduflowContextValue {
   staffPayrolls: StaffPayrollRecord[];
   installmentPlans: InstallmentPlan[];
   pointEntries: GamificationPointEntry[];
+  saasPlans: SaasPlanConfig[];
+  saasSubscriptions: SaasSubscriptionRecord[];
+  saasPayments: SaasPaymentRecord[];
+  platformSettings: PlatformSettings;
+
+  // Super Admin Platform Management Actions
+  createCenterAccount: (payload: {
+    centerName: string;
+    governorate: string;
+    city: string;
+    phone: string;
+    planId: string;
+    startAsTrial: boolean;
+    trialDays?: number;
+    ownerName: string;
+    ownerEmail: string;
+    ownerPhone: string;
+    ownerPassword: string;
+  }) => Promise<Center | null>;
+  updateCenterAccountStatus: (
+    centerId: string,
+    status: CenterAccountStatus,
+    notes?: string
+  ) => boolean;
+  upsertSaasPlan: (plan: SaasPlanConfig) => boolean;
+  updateSaasSubscription: (payload: {
+    subscriptionId: string;
+    status?: SaasSubscriptionStatus;
+    planId?: string;
+    billingCycle?: 'monthly' | 'annual';
+    extendTrialDays?: number;
+    renewMonths?: number;
+    autoRenew?: boolean;
+    overdueAmount?: number;
+    notes?: string;
+  }) => SaasSubscriptionRecord | null;
+  recordSaasPayment: (payload: {
+    centerId: string;
+    subscriptionId: string;
+    amount: number;
+    billingCycle: 'monthly' | 'annual';
+    method: SaasPaymentMethod;
+    periodLabel: string;
+    paidAt?: string;
+    notes?: string;
+  }) => SaasPaymentRecord | null;
+  createOrUpdatePlatformUser: (payload: {
+    existingUserId?: string;
+    centerId: string;
+    name: string;
+    email: string;
+    phone: string;
+    role: UserRole;
+    status: SystemUser['status'];
+    password?: string;
+  }) => Promise<SystemUser | null>;
+  updatePlatformSettings: (patch: Partial<PlatformSettings>) => boolean;
 
   // Phase 17: Integrations, Webhooks, Scheduler & Storage Foundation
   updateIntegrationConfig: (
@@ -941,6 +1012,19 @@ export const EduflowProvider: React.FC<{ children: React.ReactNode }> = ({ child
     [syncTick, currentActor]
   );
   const pointEntries = useMemo(() => repositories.pointEntries.list(), [syncTick, currentActor]);
+  const saasPlans = useMemo(() => repositories.meta.getSaasPlans(), [syncTick, currentActor]);
+  const saasSubscriptions = useMemo(
+    () => repositories.saasSubscriptions.list(),
+    [syncTick, currentActor]
+  );
+  const saasPayments = useMemo(
+    () => repositories.saasPayments.list(),
+    [syncTick, currentActor]
+  );
+  const platformSettings = useMemo(
+    () => repositories.meta.getPlatformSettings(),
+    [syncTick, currentActor]
+  );
   const scheduledJobs = useMemo(() => {
     if (!can(currentActor, 'view', 'scheduledJobs')) return [];
     const cid = currentActor?.centerId || DEFAULT_CENTER_ID;
@@ -965,7 +1049,7 @@ export const EduflowProvider: React.FC<{ children: React.ReactNode }> = ({ child
       };
     });
   }, [syncTick, currentActor]);
-  const studentPortalAvailable = isStudentPortalEnabled(centerSettings);
+  const studentPortalAvailable = isStudentPortalEnabled(centerSettings, saasPlans);
 
   const currentUser = useMemo(
     () => (authSession ? users.find((u) => u.id === authSession.userId) || null : null),
@@ -4460,6 +4544,493 @@ export const EduflowProvider: React.FC<{ children: React.ReactNode }> = ({ child
     [currentActor, appendActivityLog, runPermitted, showToast]
   );
 
+  // Super Admin Platform Management Actions
+  const createCenterAccount = useCallback<EduflowContextValue['createCenterAccount']>(
+    async (payload) => {
+      try {
+        assertCan(currentActor, 'create', 'superAdmin');
+        if (
+          !payload.centerName.trim() ||
+          !payload.ownerName.trim() ||
+          !payload.ownerEmail.trim() ||
+          payload.ownerPassword.length < 6
+        ) {
+          showToast('استكمل اسم السنتر وبيانات المالك وكلمة السر (6 أحرف فأكثر).', 'error');
+          return null;
+        }
+
+        const existingEmail = repositories.users
+          .list()
+          .some((u) => u.email.trim().toLowerCase() === payload.ownerEmail.trim().toLowerCase());
+        if (existingEmail) {
+          showToast('البريد الإلكتروني للمالك مسجل مسبقاً على المنصة.', 'error');
+          return null;
+        }
+
+        const plans = repositories.meta.getSaasPlans();
+        const selectedPlan = plans.find((p) => p.id === payload.planId) || plans[0];
+        const pSettings = repositories.meta.getPlatformSettings();
+        const trialDays = Math.max(1, payload.trialDays || pSettings.defaultTrialDays || 14);
+        const nowIso = new Date().toISOString();
+        const todayIso = nowIso.slice(0, 10);
+        const trialEndsAt = payload.startAsTrial
+          ? computeTrialEndDateIso(todayIso, trialDays)
+          : undefined;
+
+        const cred = await createPasswordCredential(payload.ownerPassword);
+        const centerId = `center-${Date.now().toString(36)}`;
+        const ownerUser = repositories.users.create({
+          centerId,
+          name: payload.ownerName.trim(),
+          email: payload.ownerEmail.trim().toLowerCase(),
+          phone: payload.ownerPhone.trim(),
+          role: UserRole.OWNER,
+          status: 'active',
+          salt: cred.salt,
+          passwordHash: cred.passwordHash,
+          failedAttempts: 0,
+        });
+
+        const createdCenter = repositories.centers.create({
+          id: centerId,
+          centerId,
+          name: payload.centerName.trim(),
+          governorate: payload.governorate.trim() || 'القاهرة',
+          city: payload.city.trim() || 'القاهرة',
+          address: '',
+          phone: payload.phone.trim(),
+          stages: ['إعدادي', 'ثانوي'],
+          currentPlanId: selectedPlan.id,
+          status: payload.startAsTrial ? 'trial' : 'active',
+          ownerUserId: ownerUser.id,
+          ownerName: ownerUser.name,
+          ownerEmail: ownerUser.email,
+          trialEndsAt,
+          createdAt: nowIso,
+        });
+
+        const periodEnd = payload.startAsTrial && trialEndsAt
+          ? trialEndsAt
+          : computeNextPeriodEndIso(todayIso, 'monthly');
+
+        repositories.saasSubscriptions.create({
+          centerId: createdCenter.id,
+          centerName: createdCenter.name,
+          planId: selectedPlan.id,
+          planName: selectedPlan.name,
+          status: payload.startAsTrial ? 'trial' : 'active',
+          billingCycle: 'monthly',
+          monthlyAmount: selectedPlan.monthlyPrice,
+          trialStartedAt: payload.startAsTrial ? todayIso : undefined,
+          trialEndsAt,
+          currentPeriodStart: todayIso,
+          currentPeriodEnd: periodEnd,
+          nextBillingDate: periodEnd,
+          autoRenew: true,
+          overdueAmount: 0,
+          updatedAt: nowIso,
+        });
+
+        appendActivityLog({
+          action: 'platform.center_create',
+          resource: 'centers',
+          resourceId: createdCenter.id,
+          summary: `إنشاء سنتر جديد «${createdCenter.name}» (${payload.startAsTrial ? `تجريبي ${trialDays} يوم` : 'مفعّل'}) مع حساب مالك ${ownerUser.name}`,
+          after: {
+            centerId: createdCenter.id,
+            planId: selectedPlan.id,
+            status: createdCenter.status,
+            ownerEmail: ownerUser.email,
+          },
+        });
+        showToast(`تم إنشاء سنتر «${createdCenter.name}» وحساب المالك بنجاح`);
+        return createdCenter;
+      } catch (err) {
+        if (err instanceof PermissionError) {
+          showToast(err.message, 'error');
+          return null;
+        }
+        throw err;
+      }
+    },
+    [currentActor, appendActivityLog, showToast]
+  );
+
+  const updateCenterAccountStatus = useCallback<
+    EduflowContextValue['updateCenterAccountStatus']
+  >(
+    (centerId, status, notes) =>
+      runPermitted(() => {
+        assertCan(currentActor, 'update', 'superAdmin');
+        const center = repositories.centers.get(centerId);
+        if (!center) return false;
+        const prevStatus = center.status || 'active';
+        repositories.centers.update(centerId, {
+          status,
+          ...(notes !== undefined ? { notes } : {}),
+        });
+
+        const subs = repositories.saasSubscriptions
+          .list()
+          .filter((s) => s.centerId === centerId);
+        const mappedSubStatus: SaasSubscriptionStatus =
+          status === 'suspended'
+            ? 'suspended'
+            : status === 'disabled'
+            ? 'cancelled'
+            : status === 'trial'
+            ? 'trial'
+            : 'active';
+        subs.forEach((sub) => {
+          repositories.saasSubscriptions.update(sub.id, {
+            status: mappedSubStatus,
+            updatedAt: new Date().toISOString(),
+          });
+        });
+
+        appendActivityLog({
+          action: 'platform.center_status',
+          resource: 'centers',
+          resourceId: centerId,
+          summary: `تغيير حالة سنتر «${center.name}» من (${prevStatus}) إلى (${status})`,
+          before: { status: prevStatus },
+          after: { status },
+        });
+        const labelMap: Record<CenterAccountStatus, string> = {
+          active: 'تفعيل',
+          trial: 'تحويل لفترة تجريبية',
+          suspended: 'تعليق مؤقت',
+          disabled: 'تعطيل كامل',
+        };
+        showToast(
+          `تم ${labelMap[status]} حساب سنتر «${center.name}»`,
+          status === 'suspended' || status === 'disabled' ? 'info' : 'success'
+        );
+        return true;
+      }, false),
+    [currentActor, appendActivityLog, runPermitted, showToast]
+  );
+
+  const upsertSaasPlan = useCallback<EduflowContextValue['upsertSaasPlan']>(
+    (plan) =>
+      runPermitted(() => {
+        assertCan(currentActor, 'update', 'saasPlans');
+        const check = validateSaasPlanDraft(plan);
+        if (!check.ok) {
+          showToast(check.error || 'بيانات الباقة غير صالحة.', 'error');
+          return false;
+        }
+        const existingPlans = repositories.meta.getSaasPlans();
+        const idx = existingPlans.findIndex((p) => p.id === plan.id);
+        const normalized: SaasPlanConfig = {
+          ...plan,
+          name: plan.name.trim(),
+          subtitle: plan.subtitle.trim(),
+          featureFlags: {
+            ...plan.featureFlags,
+            maxGroups: plan.maxGroups,
+          },
+        };
+        const nextPlans =
+          idx >= 0
+            ? existingPlans.map((p) => (p.id === plan.id ? normalized : p))
+            : [...existingPlans, normalized];
+        repositories.meta.setSaasPlans(nextPlans);
+
+        // Keep existing subscriptions' monthlyAmount aligned if active on this plan
+        repositories.saasSubscriptions
+          .list()
+          .filter((s) => s.planId === normalized.id)
+          .forEach((s) => {
+            repositories.saasSubscriptions.update(s.id, {
+              planName: normalized.name,
+              monthlyAmount: normalized.monthlyPrice,
+              updatedAt: new Date().toISOString(),
+            });
+          });
+
+        appendActivityLog({
+          action: idx >= 0 ? 'platform.plan_update' : 'platform.plan_create',
+          resource: 'saasPlans',
+          resourceId: normalized.id,
+          summary: `${idx >= 0 ? 'تحديث' : 'إضافة'} باقة «${normalized.name}» (${normalized.monthlyPrice} ج/شهر · ${normalized.maxStudents} طالب · ${normalized.maxUsers} مستخدم)`,
+          after: {
+            id: normalized.id,
+            monthlyPrice: normalized.monthlyPrice,
+            maxStudents: normalized.maxStudents,
+            maxUsers: normalized.maxUsers,
+          },
+        });
+        showToast(`تم حفظ باقة «${normalized.name}» بنجاح`);
+        return true;
+      }, false),
+    [currentActor, appendActivityLog, runPermitted, showToast]
+  );
+
+  const updateSaasSubscription = useCallback<EduflowContextValue['updateSaasSubscription']>(
+    (payload) =>
+      runPermitted(() => {
+        assertCan(currentActor, 'update', 'saasSubscriptions');
+        const sub = repositories.saasSubscriptions.get(payload.subscriptionId);
+        if (!sub) return null;
+        const plans = repositories.meta.getSaasPlans();
+        const nextPlan = payload.planId
+          ? plans.find((p) => p.id === payload.planId) || plans[0]
+          : plans.find((p) => p.id === sub.planId);
+
+        let nextTrialEnd = sub.trialEndsAt;
+        if (payload.extendTrialDays && payload.extendTrialDays > 0) {
+          const base = sub.trialEndsAt || sub.currentPeriodEnd || new Date().toISOString().slice(0, 10);
+          nextTrialEnd = computeTrialEndDateIso(base, payload.extendTrialDays);
+        }
+
+        let nextPeriodEnd = sub.currentPeriodEnd;
+        let nextBillingDate = sub.nextBillingDate;
+        if (payload.renewMonths && payload.renewMonths > 0) {
+          const base = sub.currentPeriodEnd || new Date().toISOString().slice(0, 10);
+          const cycle = payload.renewMonths >= 12 ? 'annual' : 'monthly';
+          nextPeriodEnd = computeNextPeriodEndIso(base, cycle);
+          nextBillingDate = nextPeriodEnd;
+        } else if (nextTrialEnd && (payload.status === 'trial' || sub.status === 'trial')) {
+          nextPeriodEnd = nextTrialEnd;
+          nextBillingDate = nextTrialEnd;
+        }
+
+        const nextStatus = payload.status || sub.status;
+        const updated = repositories.saasSubscriptions.update(sub.id, {
+          status: nextStatus,
+          planId: nextPlan?.id || sub.planId,
+          planName: nextPlan?.name || sub.planName,
+          monthlyAmount: nextPlan ? nextPlan.monthlyPrice : sub.monthlyAmount,
+          billingCycle: payload.billingCycle || sub.billingCycle,
+          trialEndsAt: nextTrialEnd,
+          currentPeriodEnd: nextPeriodEnd,
+          nextBillingDate,
+          autoRenew: payload.autoRenew ?? sub.autoRenew,
+          overdueAmount:
+            payload.overdueAmount !== undefined ? Math.max(0, payload.overdueAmount) : sub.overdueAmount,
+          notes: payload.notes !== undefined ? payload.notes : sub.notes,
+          updatedAt: new Date().toISOString(),
+        });
+
+        const centerPatch: Partial<Center> = {};
+        if (nextPlan) centerPatch.currentPlanId = nextPlan.id;
+        if (nextTrialEnd) centerPatch.trialEndsAt = nextTrialEnd;
+        if (nextStatus === 'active' || nextStatus === 'grace_period') centerPatch.status = 'active';
+        else if (nextStatus === 'trial') centerPatch.status = 'trial';
+        else if (nextStatus === 'suspended' || nextStatus === 'overdue') centerPatch.status = 'suspended';
+        else if (nextStatus === 'cancelled') centerPatch.status = 'disabled';
+        repositories.centers.update(sub.centerId, centerPatch);
+
+        if (sub.centerId === DEFAULT_CENTER_ID && nextPlan) {
+          const cs = repositories.meta.getCenterSettings();
+          repositories.meta.setCenterSettings({ ...cs, currentPlanId: nextPlan.id });
+        }
+
+        appendActivityLog({
+          action: 'platform.subscription_update',
+          resource: 'saasSubscriptions',
+          resourceId: sub.id,
+          summary: `تحديث اشتراك «${sub.centerName}» — الحالة: ${nextStatus} · الباقة: ${nextPlan?.name || sub.planName}`,
+          before: { status: sub.status, planId: sub.planId, trialEndsAt: sub.trialEndsAt },
+          after: { status: nextStatus, planId: nextPlan?.id, trialEndsAt: nextTrialEnd, nextPeriodEnd },
+        });
+        showToast(`تم تحديث اشتراك «${sub.centerName}» بنجاح`);
+        return updated || null;
+      }, null),
+    [currentActor, appendActivityLog, runPermitted, showToast]
+  );
+
+  const recordSaasPayment = useCallback<EduflowContextValue['recordSaasPayment']>(
+    (payload) =>
+      runPermitted(() => {
+        assertCan(currentActor, 'create', 'saasPayments');
+        if (!Number.isFinite(payload.amount) || payload.amount <= 0) {
+          showToast('أدخل قيمة دفع صحيحة أكبر من صفر.', 'error');
+          return null;
+        }
+        const center = repositories.centers.get(payload.centerId);
+        const sub = repositories.saasSubscriptions.get(payload.subscriptionId);
+        if (!center || !sub) {
+          showToast('تعذر العثور على السنتر أو سجل الاشتراك.', 'error');
+          return null;
+        }
+        const paidAt = payload.paidAt || new Date().toISOString().slice(0, 10);
+        const receiptNo = `SAAS-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 8999)}`;
+        const created = repositories.saasPayments.create({
+          centerId: center.id,
+          centerName: center.name,
+          subscriptionId: sub.id,
+          receiptNo,
+          planId: sub.planId,
+          planName: sub.planName,
+          billingCycle: payload.billingCycle,
+          amount: payload.amount,
+          method: payload.method,
+          status: 'paid',
+          paidAt,
+          periodLabel: payload.periodLabel.trim() || formatMonthArabic(paidAt.slice(0, 7)),
+          recordedBy: authSession?.name || 'مدير المنصة',
+          notes: payload.notes?.trim() || undefined,
+        });
+
+        const nextEnd = computeNextPeriodEndIso(
+          sub.currentPeriodEnd > paidAt ? sub.currentPeriodEnd : paidAt,
+          payload.billingCycle
+        );
+        repositories.saasSubscriptions.update(sub.id, {
+          status: 'active',
+          billingCycle: payload.billingCycle,
+          currentPeriodStart: paidAt,
+          currentPeriodEnd: nextEnd,
+          nextBillingDate: nextEnd,
+          overdueAmount: 0,
+          updatedAt: new Date().toISOString(),
+        });
+        repositories.centers.update(center.id, { status: 'active' });
+
+        appendActivityLog({
+          action: 'platform.payment_record',
+          resource: 'saasPayments',
+          resourceId: created.id,
+          summary: `تحصيل اشتراك بقيمة ${payload.amount} ج من «${center.name}» (${receiptNo})`,
+          after: {
+            receiptNo,
+            amount: payload.amount,
+            method: payload.method,
+            nextBillingDate: nextEnd,
+          },
+        });
+        showToast(`تم تسجيل دفعة الاشتراك وإصدار الإيصال ${receiptNo}`);
+        return created;
+      }, null),
+    [authSession?.name, currentActor, appendActivityLog, runPermitted, showToast]
+  );
+
+  const createOrUpdatePlatformUser = useCallback<
+    EduflowContextValue['createOrUpdatePlatformUser']
+  >(
+    async (payload) => {
+      try {
+        assertCan(currentActor, payload.existingUserId ? 'update' : 'create', 'users', {
+          targetUserRole: payload.role,
+        });
+        if (!payload.name.trim() || !payload.email.trim()) {
+          showToast('يرجى إدخال الاسم والبريد الإلكتروني.', 'error');
+          return null;
+        }
+
+        if (payload.existingUserId) {
+          if (
+            payload.existingUserId === authSession?.userId &&
+            (payload.status === 'disabled' || payload.role !== UserRole.SUPER_ADMIN)
+          ) {
+            showToast('لا يمكنك تعطيل حسابك الشخصي أو سحب صلاحية مدير المنصة من نفسك.', 'error');
+            return null;
+          }
+          const existing = repositories.users.get(payload.existingUserId);
+          if (!existing) return null;
+          const patch: Partial<SystemUser> = {
+            centerId: payload.centerId || existing.centerId,
+            name: payload.name.trim(),
+            email: payload.email.trim().toLowerCase(),
+            phone: payload.phone.trim(),
+            role: payload.role,
+            status: payload.status,
+          };
+          if (payload.password && payload.password.length >= 6) {
+            const cred = await createPasswordCredential(payload.password);
+            patch.salt = cred.salt;
+            patch.passwordHash = cred.passwordHash;
+            patch.failedAttempts = 0;
+            patch.lockedUntil = undefined;
+          }
+          const updated = repositories.users.update(existing.id, patch);
+          appendActivityLog({
+            action: 'platform.user_update',
+            resource: 'users',
+            resourceId: existing.id,
+            summary: `تعديل مستخدم المنصة «${patch.name}» (${patch.role} · ${patch.status})`,
+            before: { role: existing.role, status: existing.status, centerId: existing.centerId },
+            after: { role: patch.role, status: patch.status, centerId: patch.centerId },
+          });
+          showToast(`تم تحديث حساب «${patch.name}» بنجاح`);
+          return updated || null;
+        }
+
+        const duplicateEmail = repositories.users
+          .list()
+          .some((u) => u.email.trim().toLowerCase() === payload.email.trim().toLowerCase());
+        if (duplicateEmail) {
+          showToast('البريد الإلكتروني مستخدم بالفعل.', 'error');
+          return null;
+        }
+        const passToHash = payload.password && payload.password.length >= 6 ? payload.password : 'Eduflow3571';
+        const cred = await createPasswordCredential(passToHash);
+        const created = repositories.users.create({
+          centerId: payload.centerId || PLATFORM_CENTER_ID,
+          name: payload.name.trim(),
+          email: payload.email.trim().toLowerCase(),
+          phone: payload.phone.trim(),
+          role: payload.role,
+          status: payload.status,
+          salt: cred.salt,
+          passwordHash: cred.passwordHash,
+          failedAttempts: 0,
+        });
+        appendActivityLog({
+          action: 'platform.user_create',
+          resource: 'users',
+          resourceId: created.id,
+          summary: `إنشاء حساب مستخدم منصة «${created.name}» بدور (${created.role})`,
+          after: { id: created.id, email: created.email, role: created.role, centerId: created.centerId },
+        });
+        showToast(`تم إنشاء حساب «${created.name}» بنجاح`);
+        return created;
+      } catch (err) {
+        if (err instanceof PermissionError) {
+          showToast(err.message, 'error');
+          return null;
+        }
+        throw err;
+      }
+    },
+    [authSession?.userId, currentActor, appendActivityLog, showToast]
+  );
+
+  const updatePlatformSettings = useCallback<EduflowContextValue['updatePlatformSettings']>(
+    (patch) =>
+      runPermitted(() => {
+        assertCan(currentActor, 'update', 'platformSettings');
+        const check = validatePlatformSettingsPatch(patch);
+        if (!check.ok) {
+          showToast(check.error || 'إعدادات المنصة غير صالحة.', 'error');
+          return false;
+        }
+        const prev = repositories.meta.getPlatformSettings();
+        const next: PlatformSettings = {
+          ...prev,
+          ...patch,
+          productName: (patch.productName ?? prev.productName).trim(),
+          productTagline: (patch.productTagline ?? prev.productTagline).trim(),
+        };
+        if (!next.enabledLanguages.includes(next.defaultLanguage)) {
+          next.defaultLanguage = next.enabledLanguages[0] || 'ar';
+        }
+        repositories.meta.setPlatformSettings(next);
+        appendActivityLog({
+          action: 'platform.settings_update',
+          resource: 'platformSettings',
+          summary: `تحديث الإعدادات العامة للمنتج واللغات (الاسم: ${next.productName} · التجربة المجانية: ${next.defaultTrialDays} يوم)`,
+          before: prev,
+          after: next,
+        });
+        showToast('تم حفظ الإعدادات العامة للمنصة بنجاح');
+        return true;
+      }, false),
+    [currentActor, appendActivityLog, runPermitted, showToast]
+  );
+
   return (
     <EduflowContext.Provider
       value={{
@@ -4537,6 +5108,17 @@ export const EduflowProvider: React.FC<{ children: React.ReactNode }> = ({ child
         staffPayrolls,
         installmentPlans,
         pointEntries,
+        saasPlans,
+        saasSubscriptions,
+        saasPayments,
+        platformSettings,
+        createCenterAccount,
+        updateCenterAccountStatus,
+        upsertSaasPlan,
+        updateSaasSubscription,
+        recordSaasPayment,
+        createOrUpdatePlatformUser,
+        updatePlatformSettings,
         updateIntegrationConfig,
         testIntegrationConnection,
         startMockPaymobCheckout,

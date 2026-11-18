@@ -27,8 +27,12 @@ import {
   OnlineExamAttempt,
   OutboxMessage,
   PaymentRecord,
+  PlatformSettings,
   RegistrationLead,
   Room,
+  SaasPaymentRecord,
+  SaasPlanConfig,
+  SaasSubscriptionRecord,
   ScheduledJobRunRecord,
   SettlementRecord,
   StaffAttendanceRecord,
@@ -174,6 +178,8 @@ const ENTITY_TO_RESOURCE: Record<EntityKey, PermissionResource> = {
   staffPayrolls: 'staffPayrolls',
   installmentPlans: 'installmentPlans',
   pointEntries: 'pointEntries',
+  saasSubscriptions: 'saasSubscriptions',
+  saasPayments: 'saasPayments',
 };
 
 function buildPermissionContextForItem(
@@ -259,13 +265,32 @@ function filterItemsForActor<T>(
   actor: PermissionActor | null
 ): T[] {
   if (!actor) return [];
-  if (
-    actor.role === 'system' ||
-    actor.role === UserRole.OWNER ||
-    actor.role === UserRole.ADMIN
-  ) {
+  if (actor.role === 'system' || actor.role === UserRole.SUPER_ADMIN) {
     return items;
   }
+
+  // Multi-tenant isolation: non-Super-Admin actors only see records belonging to their active centerId
+  const actorCenterId = actor.centerId;
+  const centerScopedItems = actorCenterId
+    ? items.filter((item) => {
+        if (entityKey === 'centers') {
+          return (item as unknown as Center).id === actorCenterId;
+        }
+        if (entityKey === 'users') {
+          const u = item as unknown as SystemUser;
+          return u.role !== UserRole.SUPER_ADMIN && u.centerId === actorCenterId;
+        }
+        const cid = (item as unknown as { centerId?: string }).centerId;
+        return !cid || cid === actorCenterId;
+      })
+    : items;
+
+  if (actor.role === UserRole.OWNER || actor.role === UserRole.ADMIN) {
+    return centerScopedItems;
+  }
+
+  const scopedInput = centerScopedItems;
+  items = scopedInput;
 
   const resource = ENTITY_TO_RESOURCE[entityKey];
   if (!can(actor, 'view', resource)) {
@@ -661,6 +686,8 @@ export interface EduflowRepositories {
   staffPayrolls: Repository<StaffPayrollRecord>;
   installmentPlans: Repository<InstallmentPlan>;
   pointEntries: Repository<GamificationPointEntry>;
+  saasSubscriptions: Repository<SaasSubscriptionRecord>;
+  saasPayments: Repository<SaasPaymentRecord>;
   meta: {
     getStages(): string[];
     setStages(stages: string[]): void;
@@ -668,6 +695,10 @@ export interface EduflowRepositories {
     setTemplates(templates: MessageTemplate[]): void;
     getCenterSettings(): CenterSettings;
     setCenterSettings(settings: CenterSettings): void;
+    getSaasPlans(): SaasPlanConfig[];
+    setSaasPlans(plans: SaasPlanConfig[]): void;
+    getPlatformSettings(): PlatformSettings;
+    setPlatformSettings(settings: PlatformSettings): void;
   };
 }
 
@@ -1012,6 +1043,20 @@ export function createRepositories(
       undefined,
       options
     ),
+    saasSubscriptions: createEntityRepository<'saasSubscriptions', SaasSubscriptionRecord>(
+      adapter,
+      'saasSubscriptions',
+      'sub',
+      undefined,
+      options
+    ),
+    saasPayments: createEntityRepository<'saasPayments', SaasPaymentRecord>(
+      adapter,
+      'saasPayments',
+      'spay',
+      undefined,
+      options
+    ),
     meta: {
       getStages: () => adapter.getMeta('stages'),
       setStages: (stages) => {
@@ -1036,6 +1081,16 @@ export function createRepositories(
           checkMetaWrite('update', 'settings');
         }
         adapter.setMeta('centerSettings', settings);
+      },
+      getSaasPlans: () => adapter.getMeta('saasPlans'),
+      setSaasPlans: (plans) => {
+        checkMetaWrite('update', 'saasPlans');
+        adapter.setMeta('saasPlans', plans);
+      },
+      getPlatformSettings: () => adapter.getMeta('platformSettings'),
+      setPlatformSettings: (settings) => {
+        checkMetaWrite('update', 'platformSettings');
+        adapter.setMeta('platformSettings', settings);
       },
     },
   };

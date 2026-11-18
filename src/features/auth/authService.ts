@@ -55,9 +55,16 @@ export class AuthService {
       return null;
     }
     const existingUser = runWithSystemActor(() => this.repos.users.get(raw.userId));
-    if (!existingUser) {
+    if (!existingUser || existingUser.status === 'disabled') {
       this.repos.adapter.removeRawValue(AUTH_SESSION_STORAGE_KEY);
       return null;
+    }
+    if (existingUser.role !== UserRole.SUPER_ADMIN && existingUser.centerId) {
+      const center = runWithSystemActor(() => this.repos.centers.get(existingUser.centerId));
+      if (center && (center.status === 'suspended' || center.status === 'disabled')) {
+        this.repos.adapter.removeRawValue(AUTH_SESSION_STORAGE_KEY);
+        return null;
+      }
     }
     return raw;
   }
@@ -106,6 +113,26 @@ export class AuthService {
           ok: false,
           error: 'بيانات الدخول غير صحيحة. تأكد من رقم الموبايل أو البريد الإلكتروني وكلمة السر.',
         };
+      }
+
+      if (matchedUser.status === 'disabled') {
+        return {
+          ok: false,
+          error: 'تم تعطيل هذا الحساب من قِبل إدارة المنصة. يرجى التواصل مع مسؤول السنتر أو الدعم الفني.',
+        };
+      }
+
+      if (matchedUser.role !== UserRole.SUPER_ADMIN && matchedUser.centerId) {
+        const userCenter = this.repos.centers.get(matchedUser.centerId);
+        if (userCenter && (userCenter.status === 'suspended' || userCenter.status === 'disabled')) {
+          return {
+            ok: false,
+            error:
+              userCenter.status === 'disabled'
+                ? 'تم تعطيل حساب هذا السنتر نهائياً على منصة EDUFLOW. تواصل مع إدارة المنصة.'
+                : 'تم إيقاف حساب السنتر مؤقتاً لحين تسوية الاشتراك. تواصل مع إدارة المنصة.',
+          };
+        }
       }
 
     // Check active lockout window

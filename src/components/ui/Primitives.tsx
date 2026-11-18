@@ -450,8 +450,8 @@ export const ToastViewport: React.FC<{
 }> = ({ toasts, onDismiss }) => {
   if (toasts.length === 0) return null;
   return (
-    <div className="fixed bottom-20 md:bottom-6 left-6 z-[60] flex flex-col gap-2 max-w-sm w-full pointer-events-none">
-      {toasts.map((t) => (
+    <div className="fixed bottom-20 md:bottom-6 left-3 right-3 sm:right-auto sm:left-6 z-[60] flex flex-col gap-2 sm:max-w-sm pointer-events-none">
+      {toasts.slice(-2).map((t) => (
         <div
           key={t.id}
           role="status"

@@ -253,9 +253,9 @@ export const LoginScreen: React.FC = () => {
               <div className="pt-4 border-t border-[#E2E8F0] space-y-3 text-center text-xs">
                 <div className="space-y-1.5">
                   <span className="text-[11px] font-semibold text-[#5B6B80] block">
-                    دخول سريع لحسابات سنتر حامد البيلي:
+                    دخول سريع لحسابات المنصة والسنتر:
                   </span>
-                  <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
                     {[
                       { role: UserRole.OWNER, email: 'hamed@hamed-elbailey.demo', pass: 'Hamed3571', label: 'المالك' },
                       { role: UserRole.ADMIN, email: 'salma@hamed-elbailey.demo', pass: 'Salma3571', label: 'الإدارة' },
@@ -263,6 +263,7 @@ export const LoginScreen: React.FC = () => {
                       { role: UserRole.TEACHER, email: 'mohamed@hamed-elbailey.demo', pass: 'Mohamed3571', label: 'المدرس' },
                       { role: UserRole.PARENT, email: 'mimi@hamed-elbailey.demo', pass: 'Mimi3571', label: 'ولي أمر' },
                       { role: UserRole.STUDENT, email: 'mahmoud@hamed-elbailey.demo', pass: 'Mahmoud3571', label: 'الطالب' },
+                      { role: UserRole.SUPER_ADMIN, email: 'superadmin@eduflow.eg', pass: 'Super3571', label: 'مدير المنصة' },
                     ].map((preset) => (
                       <button
                         key={preset.role}
@@ -461,7 +462,7 @@ export const LoginScreen: React.FC = () => {
 
 // 2) 3-Step Onboarding Wizard
 export const OnboardingScreen: React.FC = () => {
-  const { navigate, registerCenterOwner, showToast } = useEduflow();
+  const { navigate, registerCenterOwner, platformSettings, showToast } = useEduflow();
 
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
   const [loading, setLoading] = useState(false);
@@ -609,7 +610,29 @@ export const OnboardingScreen: React.FC = () => {
             </div>
           )}
 
-          <Card className="p-6 sm:p-8">
+          {!platformSettings.allowSelfOnboarding ? (
+            <Card className="p-6 sm:p-8 text-center space-y-4">
+              <div className="w-12 h-12 rounded-full bg-[#FEF3C7] text-[#92400E] flex items-center justify-center mx-auto">
+                <AlertCircle className="w-6 h-6" />
+              </div>
+              <h1 className="text-xl font-bold text-[#0F2A4A]">
+                التسجيل الذاتي للسناتر مغلق مؤقتاً
+              </h1>
+              <p className="text-xs text-[#5B6B80] leading-relaxed max-w-md mx-auto">
+                يتم تفعيل حسابات السناتر الجديدة حالياً عبر فريق إدارة المنصة مباشرة. تواصل معنا على{' '}
+                <strong dir="ltr">{platformSettings.supportEmail}</strong> لتجهيز حساب سنترك.
+              </p>
+              <div className="flex items-center justify-center gap-3 pt-2">
+                <Button onClick={() => navigate(ScreenId.LOGIN)}>
+                  تسجيل الدخول
+                </Button>
+                <Button variant="secondary" onClick={() => navigate(ScreenId.LANDING)}>
+                  العودة للرئيسية
+                </Button>
+              </div>
+            </Card>
+          ) : (
+            <Card className="p-6 sm:p-8">
             {error && (
               <div
                 role="alert"
@@ -625,7 +648,7 @@ export const OnboardingScreen: React.FC = () => {
                 <div>
                   <h1 className="text-xl font-bold text-[#0F2A4A]">إنشاء حساب مالك السنتر</h1>
                   <p className="text-xs text-[#5B6B80] mt-1">
-                    ابدأ بإعداد حساب المدير العام للتحكم في الفروع والمستخدمين
+                    ابدأ بإعداد حساب المدير العام مع فترة تجريبية مجانية لمدة {platformSettings.defaultTrialDays} يوماً
                   </p>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -946,6 +969,7 @@ export const OnboardingScreen: React.FC = () => {
               </div>
             )}
           </Card>
+          )}
         </div>
       </div>
     </div>

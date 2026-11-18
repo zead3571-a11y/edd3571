@@ -13,12 +13,12 @@ import {
 } from 'lucide-react';
 import { useEduflow } from '../../context/EduflowContext';
 import { ScreenId } from '../../types/eduflow';
-import { SUBSCRIPTION_PLANS } from '../../data/seedData';
 import { formatEGP } from '../../utils/eduflowLogic';
 import { Button, Card, EduflowLogo } from '../ui/Primitives';
 
 export const LandingScreen: React.FC = () => {
-  const { navigate, centerSettings, students, sessions } = useEduflow();
+  const { navigate, centerSettings, students, sessions, saasPlans, platformSettings } = useEduflow();
+  const visiblePlans = saasPlans.filter((p) => p.active);
 
   const activeStudentsCount = students.filter((s) => s.status === 'active').length;
   const todayIso = new Date().toISOString().slice(0, 10);
@@ -295,7 +295,7 @@ export const LandingScreen: React.FC = () => {
             <div>
               <h2 className="text-2xl font-bold text-[#0F2A4A]">باقات واضحة بالعملة المحلية</h2>
               <p className="text-sm text-[#5B6B80] mt-1">
-                ابدأ بسنترك اليوم، ويمكنك الترقية في أي وقت مع نمو عدد الطلاب.
+                ابدأ بسنترك اليوم بفترة تجريبية مجانية لمدة {platformSettings.defaultTrialDays} يوماً، ويمكنك الترقية في أي وقت مع نمو عدد الطلاب.
               </p>
             </div>
             <button
@@ -308,7 +308,7 @@ export const LandingScreen: React.FC = () => {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-            {SUBSCRIPTION_PLANS.map((plan) => (
+            {visiblePlans.map((plan) => (
               <Card
                 key={plan.id}
                 className={`p-6 flex flex-col justify-between ${
@@ -391,7 +391,7 @@ export const LandingScreen: React.FC = () => {
         <div className="max-w-[1200px] mx-auto px-4 sm:px-6 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-[#5B6B80]">
           <div className="flex items-center gap-3">
             <EduflowLogo dark={false} compact />
-            <span>EDUFLOW — كل سنترك في مكان واحد</span>
+            <span>{platformSettings.productName} — {platformSettings.productTagline}</span>
           </div>
           <div className="flex flex-wrap items-center gap-4 font-semibold">
             <button

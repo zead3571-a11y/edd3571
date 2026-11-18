@@ -1,4 +1,5 @@
 export enum UserRole {
+  SUPER_ADMIN = 'مدير المنصة',
   OWNER = 'مالك',
   ADMIN = 'مدير',
   ACCOUNTANT = 'محاسب',
@@ -40,6 +41,7 @@ export enum ScreenId {
   ONLINE_REGISTRATION = 'online_registration',
   STAFF_PAYROLL = 'staff_payroll',
   AI_ASSISTANT = 'ai_assistant',
+  SUPER_ADMIN = 'super_admin',
   DESIGN_SYSTEM = 'design_system',
 }
 
@@ -53,6 +55,8 @@ export type SessionType = 'regular' | 'makeup';
 export type CompensationType = 'percentage' | 'fixed_rent' | 'per_session';
 export type DayOfWeek = 'السبت' | 'الأحد' | 'الاثنين' | 'الثلاثاء' | 'الأربعاء' | 'الخميس' | 'الجمعة';
 
+export type CenterAccountStatus = 'active' | 'trial' | 'suspended' | 'disabled';
+
 export interface Center {
   id: string;
   centerId?: string;
@@ -62,7 +66,13 @@ export interface Center {
   address: string;
   phone: string;
   stages: string[];
-  currentPlanId: 'basic' | 'pro' | 'enterprise';
+  currentPlanId: 'basic' | 'pro' | 'enterprise' | (string & {});
+  status?: CenterAccountStatus;
+  ownerUserId?: string;
+  ownerName?: string;
+  ownerEmail?: string;
+  trialEndsAt?: string;
+  notes?: string;
   createdAt: string;
 }
 
@@ -435,7 +445,7 @@ export interface SystemUser {
   email: string;
   phone: string;
   role: UserRole;
-  status: 'active' | 'invited';
+  status: 'active' | 'invited' | 'disabled';
   teacherId?: string;
   studentId?: string;
   guardianId?: string;
@@ -480,7 +490,7 @@ export interface CenterSettings {
   address: string;
   phone: string;
   stages: string[];
-  currentPlanId: 'basic' | 'pro' | 'enterprise';
+  currentPlanId: 'basic' | 'pro' | 'enterprise' | (string & {});
   billingBanner: 'none' | 'payment_failed' | 'grace_period' | 'read_only';
   reportsLockedDemo: boolean;
   discountPolicy?: DiscountPolicySettings;
@@ -492,7 +502,7 @@ export interface CenterSettings {
   studentMaxDevices?: number;
   studentSessionDays?: number;
   integrations?: Record<IntegrationKey, IntegrationConfig>;
-  planFeatureOverrides?: Partial<Record<'basic' | 'pro' | 'enterprise', Record<string, boolean>>>;
+  planFeatureOverrides?: Record<string, Record<string, boolean>>;
   autoReminderRule?: AutoReminderRule;
 }
 
@@ -831,4 +841,96 @@ export interface GamificationPointEntry {
   awardedBy: string;
   createdAt: string;
 }
+
+export type PlatformLanguageCode = 'ar' | 'en';
+
+export interface SaasPlanFeatureLine {
+  text: string;
+  soon?: boolean;
+  included: boolean;
+}
+
+export interface SaasPlanConfig {
+  id: 'basic' | 'pro' | 'enterprise' | (string & {});
+  name: string;
+  subtitle: string;
+  monthlyPrice: number;
+  annualMonthsCharged?: number;
+  maxStudents: number;
+  maxUsers: number;
+  maxGroups: number;
+  popular?: boolean;
+  active: boolean;
+  featureFlags: Record<string, boolean | number>;
+  features: SaasPlanFeatureLine[];
+}
+
+export type SaasSubscriptionStatus =
+  | 'trial'
+  | 'active'
+  | 'grace_period'
+  | 'overdue'
+  | 'suspended'
+  | 'cancelled';
+
+export interface SaasSubscriptionRecord {
+  id: string;
+  centerId: string;
+  centerName: string;
+  planId: string;
+  planName: string;
+  status: SaasSubscriptionStatus;
+  billingCycle: 'monthly' | 'annual';
+  monthlyAmount: number;
+  trialStartedAt?: string;
+  trialEndsAt?: string;
+  currentPeriodStart: string;
+  currentPeriodEnd: string;
+  nextBillingDate: string;
+  autoRenew: boolean;
+  overdueAmount: number;
+  notes?: string;
+  updatedAt: string;
+}
+
+export type SaasPaymentMethod =
+  | 'تحويل بنكي'
+  | 'إنستاباي'
+  | 'فودافون كاش'
+  | 'بطاقة بنكية'
+  | 'نقدي';
+
+export interface SaasPaymentRecord {
+  id: string;
+  centerId: string;
+  centerName: string;
+  subscriptionId: string;
+  receiptNo: string;
+  planId: string;
+  planName: string;
+  billingCycle: 'monthly' | 'annual';
+  amount: number;
+  method: SaasPaymentMethod;
+  status: 'paid' | 'pending' | 'failed' | 'refunded';
+  paidAt: string;
+  periodLabel: string;
+  recordedBy: string;
+  notes?: string;
+}
+
+export interface PlatformSettings {
+  productName: string;
+  productTagline: string;
+  defaultLanguage: PlatformLanguageCode;
+  enabledLanguages: PlatformLanguageCode[];
+  currencyCode: 'EGP' | 'SAR' | 'USD';
+  currencySymbol: string;
+  defaultTrialDays: number;
+  gracePeriodDays: number;
+  allowSelfOnboarding: boolean;
+  supportEmail: string;
+  supportPhone: string;
+  maintenanceMode: boolean;
+}
+
 

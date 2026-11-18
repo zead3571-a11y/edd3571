@@ -22,6 +22,7 @@ import {
   Search,
   Settings,
   ShieldAlert,
+  ShieldCheck,
   Sparkles,
   UserCheck,
   UserPlus,
@@ -73,6 +74,7 @@ const SCREEN_TITLES: Record<ScreenId, string> = {
   [ScreenId.PARENT_PORTAL]: 'بوابة أولياء الأمور',
   [ScreenId.STUDENT_LOGIN]: 'دخول منصة الطالب',
   [ScreenId.STUDENT_PORTAL]: 'منصة الطالب',
+  [ScreenId.SUPER_ADMIN]: 'إدارة المنصة',
   [ScreenId.DESIGN_SYSTEM]: 'نظام التصميم (EDUFLOW Components)',
 };
 
@@ -94,6 +96,7 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
     setSelectedTeacherId,
     centerSettings,
     updateCenterSettings,
+    platformSettings,
     toasts,
     dismissToast,
   } = useEduflow();
@@ -134,6 +137,11 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
     matchIds?: ScreenId[];
     onSelect?: () => void;
   }[] = [
+    {
+      id: ScreenId.SUPER_ADMIN,
+      label: 'إدارة المنصة',
+      icon: <ShieldCheck className="w-4 h-4" />,
+    },
     { id: ScreenId.DASHBOARD, label: 'الرئيسية', icon: <Home className="w-4 h-4" /> },
     {
       id: ScreenId.STUDENTS,
@@ -352,7 +360,11 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
         </nav>
 
         <div className="p-3 border-t border-white/10 text-xs text-slate-300">
-          <p className="font-bold text-white truncate">{centerSettings.name}</p>
+          <p className="font-bold text-white truncate">
+            {currentRole === UserRole.SUPER_ADMIN
+              ? `منصة ${platformSettings.productName}`
+              : centerSettings.name}
+          </p>
           <p className="text-[11px] text-slate-400 mt-0.5">
             الصلاحية الحالية: {currentRole}
           </p>
@@ -361,6 +373,17 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
 
       {/* Main Content Area */}
       <div className="flex-1 min-w-0 flex flex-col pb-16 lg:pb-0">
+        {platformSettings.maintenanceMode && currentRole !== UserRole.SUPER_ADMIN && (
+          <div
+            role="status"
+            className="px-4 lg:px-6 py-2 text-xs font-bold bg-[#FEF3C7] text-[#92400E] border-b border-amber-300 flex items-center gap-2"
+          >
+            <AlertTriangle className="w-4 h-4 shrink-0" />
+            <span>
+              المنصة في وضع الصيانة المجدولة حالياً — قد تتأخر بعض المزامنات التلقائية لحين انتهاء الصيانة.
+            </span>
+          </div>
+        )}
         {/* Subscription Status Banner (Screen 20: Grace Period / Failed / Read-Only) */}
         {centerSettings.billingBanner !== 'none' && (
           <div
@@ -594,7 +617,7 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
                       </p>
                       <div className="grid grid-cols-3 gap-1 mt-2">
                         {Object.values(UserRole)
-                          .filter((role) => role !== UserRole.STUDENT)
+                          .filter((role) => role !== UserRole.STUDENT && role !== UserRole.SUPER_ADMIN)
                           .map((role) => (
                             <button
                               key={role}
@@ -759,6 +782,7 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
             </div>
             <div className="grid grid-cols-2 gap-2.5">
               {[
+                { id: ScreenId.SUPER_ADMIN, label: 'إدارة المنصة', icon: <ShieldCheck className="w-4 h-4" /> },
                 { id: ScreenId.TEACHERS, label: 'المدرسين', icon: <GraduationCap className="w-4 h-4" /> },
                 ...(currentRole === UserRole.TEACHER && currentActor?.teacherId
                   ? [

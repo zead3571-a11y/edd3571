@@ -92,7 +92,12 @@ export type PermissionResource =
   | 'staffPayrolls'
   | 'installmentPlans'
   | 'pointEntries'
-  | 'aiAssistant';
+  | 'aiAssistant'
+  | 'superAdmin'
+  | 'saasPlans'
+  | 'saasSubscriptions'
+  | 'saasPayments'
+  | 'platformSettings';
 
 export interface PermissionActor {
   userId?: string;
@@ -196,6 +201,11 @@ const RESOURCE_LABELS_AR: Record<PermissionResource, string> = {
   installmentPlans: 'خطط التقسيط',
   pointEntries: 'نقاط التحفيز ولوحة الشرف',
   aiAssistant: 'المساعد الذكي AI',
+  superAdmin: 'لوحة إدارة المنصة (Super Admin)',
+  saasPlans: 'باقات وأسعار المنصة',
+  saasSubscriptions: 'اشتراكات وتجديدات السناتر',
+  saasPayments: 'إيرادات ومدفوعات المنصة',
+  platformSettings: 'الإعدادات العامة للمنتج واللغات',
 };
 
 export class PermissionError extends Error {
@@ -289,13 +299,47 @@ export function can(
 
   const role = actor.role;
 
-  // Center Owner: unrestricted across all actions & resources
-  if (role === UserRole.OWNER) {
+  // Platform Super Admin: unrestricted across entire SaaS platform & all centers
+  if (role === UserRole.SUPER_ADMIN) {
     return true;
   }
 
-  // Center Admin: everything EXCEPT plan changes, deleting center, enabling biometrics, managing owner accounts
+  // Center Owner: full access inside own center; strictly blocked from Super Admin platform console & SaaS catalog mutations
+  if (role === UserRole.OWNER) {
+    if (resource === 'superAdmin') {
+      return false;
+    }
+    if (
+      (resource === 'saasPlans' ||
+        resource === 'platformSettings' ||
+        resource === 'saasSubscriptions' ||
+        resource === 'saasPayments') &&
+      action !== 'view'
+    ) {
+      return false;
+    }
+    if (
+      resource === 'users' &&
+      context?.targetUserRole === UserRole.SUPER_ADMIN &&
+      action !== 'view'
+    ) {
+      return false;
+    }
+    return true;
+  }
+
+  // Center Admin: everything EXCEPT plan changes, deleting center, enabling biometrics, managing owner/super-admin accounts, or platform administration
   if (role === UserRole.ADMIN) {
+    if (
+      resource === 'superAdmin' ||
+      ((resource === 'saasPlans' ||
+        resource === 'platformSettings' ||
+        resource === 'saasSubscriptions' ||
+        resource === 'saasPayments') &&
+        action !== 'view')
+    ) {
+      return false;
+    }
     if (action === 'change_plan' || action === 'delete_center' || action === 'enable_biometrics' || action === 'manage_owners') {
       return false;
     }
@@ -310,7 +354,8 @@ export function can(
     }
     if (
       resource === 'users' &&
-      context?.targetUserRole === UserRole.OWNER &&
+      (context?.targetUserRole === UserRole.OWNER ||
+        context?.targetUserRole === UserRole.SUPER_ADMIN) &&
       action !== 'view'
     ) {
       return false;
@@ -744,6 +789,8 @@ export function canAccessScreen(
       return can(actor, 'view', 'staffAttendance') || can(actor, 'view', 'staffPayrolls');
     case ScreenId.AI_ASSISTANT:
       return can(actor, 'view', 'aiAssistant');
+    case ScreenId.SUPER_ADMIN:
+      return actor.role === UserRole.SUPER_ADMIN && can(actor, 'view', 'superAdmin');
     case ScreenId.ASSESSMENTS:
       return can(actor, 'view', 'assessments');
     case ScreenId.NOTIFICATIONS:
@@ -767,6 +814,7 @@ export function canAccessScreen(
 
 export function getDefaultHomeScreen(actor: PermissionActor | null | undefined): ScreenId {
   if (!actor) return ScreenId.LOGIN;
+  if (actor.role === UserRole.SUPER_ADMIN) return ScreenId.SUPER_ADMIN;
   if (actor.role === UserRole.PARENT) return ScreenId.PARENT_PORTAL;
   if (actor.role === UserRole.STUDENT) return ScreenId.STUDENT_PORTAL;
   return ScreenId.DASHBOARD;
@@ -794,7 +842,13 @@ export function scopeCollectionsForActor(
   actor: PermissionActor | null | undefined,
   data: ScopedCollectionsInput
 ): ScopedCollectionsInput {
-  if (!actor || actor.role === 'system' || actor.role === UserRole.OWNER || actor.role === UserRole.ADMIN) {
+  if (
+    !actor ||
+    actor.role === 'system' ||
+    actor.role === UserRole.SUPER_ADMIN ||
+    actor.role === UserRole.OWNER ||
+    actor.role === UserRole.ADMIN
+  ) {
     return data;
   }
 

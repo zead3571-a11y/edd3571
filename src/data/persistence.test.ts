@@ -42,7 +42,14 @@ test('LocalStorageAdapter persists data across reloads with eduflow:v1: prefix a
   assert.equal(repos1.centers.list()[0]?.name, 'سنتر حامد البيلي');
   assert.equal(repos1.students.list().length, 2);
   assert.equal(repos1.teachers.list().length, 3);
-  assert.equal(repos1.users.list().length, 10);
+  assert.equal(
+    repos1.users.list().filter((u) => u.role !== UserRole.SUPER_ADMIN).length,
+    10
+  );
+  assert.equal(
+    repos1.users.list().some((u) => u.role === UserRole.SUPER_ADMIN),
+    true
+  );
 
   const created = repos1.students.create({
     centerId: DEFAULT_CENTER_ID,

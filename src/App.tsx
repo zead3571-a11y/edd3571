@@ -55,6 +55,7 @@ import {
   AiAssistantScreen,
   StaffPayrollScreen,
 } from './components/screens/StaffPayrollAndAiScreens';
+import { SuperAdminScreen } from './components/screens/SuperAdminScreen';
 
 import { canAccessScreen } from './permissions/permissions';
 import { AccessDeniedScreen } from './permissions/Can';
@@ -133,6 +134,8 @@ const ScreenRouter: React.FC = () => {
       return <StaffPayrollScreen />;
     case ScreenId.AI_ASSISTANT:
       return <AiAssistantScreen />;
+    case ScreenId.SUPER_ADMIN:
+      return <SuperAdminScreen />;
     case ScreenId.DESIGN_SYSTEM:
       return <DesignSystemScreen />;
     default:

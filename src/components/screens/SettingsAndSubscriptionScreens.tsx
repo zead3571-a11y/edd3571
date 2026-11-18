@@ -38,9 +38,9 @@ import {
 import {
   BILLING_HISTORY,
   BooleanPlanFeatureKey,
+  DEFAULT_CENTER_ID,
   DEFAULT_INTEGRATIONS,
   PLAN_FEATURE_LABELS,
-  SUBSCRIPTION_PLANS,
   getPlanConfig,
   isPlanFeatureEnabled,
 } from '../../data/seedData';
@@ -72,6 +72,7 @@ export const SettingsScreen: React.FC = () => {
     studentPortalAvailable,
     invoices,
     payments,
+    saasPlans,
     webhookEvents,
     scheduledJobs,
     updateIntegrationConfig,
@@ -961,7 +962,7 @@ export const SettingsScreen: React.FC = () => {
       {/* Tab: منصة الطالب (Phase 11 Plan & Settings Gate) */}
       {activeTab === 'studentPortal' && (
         <div className="space-y-5 max-w-3xl">
-          {!isPlanFeatureEnabled(centerSettings.currentPlanId, 'studentPortal') ? (
+          {!isPlanFeatureEnabled(centerSettings.currentPlanId, 'studentPortal', centerSettings, saasPlans) ? (
             <Card className="p-6 space-y-4 border-amber-300 bg-[#FEF3C7]/40">
               <div className="flex items-start gap-3">
                 <div className="w-10 h-10 rounded-[10px] bg-[#FEF3C7] text-[#92400E] flex items-center justify-center shrink-0">
@@ -973,7 +974,7 @@ export const SettingsScreen: React.FC = () => {
                   </h3>
                   <p className="text-xs text-[#5B6B80] leading-relaxed">
                     تتطلب ميزة «منصة الطالب» ودخول الطلاب بالأكواد الشخصية الترقية من{' '}
-                    <strong>{getPlanConfig(centerSettings.currentPlanId).name}</strong> إلى الباقة الاحترافية أو المتكاملة.
+                    <strong>{getPlanConfig(centerSettings.currentPlanId, saasPlans).name}</strong> إلى الباقة الاحترافية أو المتكاملة.
                   </p>
                 </div>
               </div>
@@ -1361,7 +1362,7 @@ export const SettingsScreen: React.FC = () => {
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
                 <h3 className="text-base font-bold text-[#0F2A4A]">
-                  مفاتيح المزايا المتقدمة للباقة الحالية ({getPlanConfig(centerSettings.currentPlanId).name})
+                  مفاتيح المزايا المتقدمة للباقة الحالية ({getPlanConfig(centerSettings.currentPlanId, saasPlans).name})
                 </h3>
                 <p className="text-xs text-[#5B6B80] mt-0.5">
                   يمكن لمالك السنتر تفعيل أو إيقاف أي ميزة على الباقة الحالية مباشرة للاختبار أو التشغيل.
@@ -1373,7 +1374,8 @@ export const SettingsScreen: React.FC = () => {
                 const enabled = isPlanFeatureEnabled(
                   centerSettings.currentPlanId,
                   flagKey,
-                  centerSettings
+                  centerSettings,
+                  saasPlans
                 );
                 return (
                   <button
@@ -1770,6 +1772,8 @@ export const SubscriptionScreen: React.FC = () => {
     updateCenterSettings,
     students,
     users,
+    saasPlans,
+    saasPayments,
     openLockedFeatureModal,
     showToast,
   } = useEduflow();
@@ -1777,18 +1781,18 @@ export const SubscriptionScreen: React.FC = () => {
   const canChangePlan = can(currentActor, 'change_plan', 'subscription');
 
   const [billingCycle, setBillingCycle] = useState<'monthly' | 'annual'>('monthly');
-  const [upgradePlanId, setUpgradePlanId] = useState<'basic' | 'pro' | 'enterprise' | null>(null);
+  const [upgradePlanId, setUpgradePlanId] = useState<string | null>(null);
   const [upgradeStep, setUpgradeStep] = useState<'payment' | 'success'>('payment');
   const [gatewayMethod, setGatewayMethod] = useState<'card' | 'wallet'>('card');
 
-  const currentPlan =
-    SUBSCRIPTION_PLANS.find((p) => p.id === centerSettings.currentPlanId) ||
-    SUBSCRIPTION_PLANS[1];
+  const activePlans = saasPlans.filter((p) => p.active);
+  const availablePlans = activePlans.length > 0 ? activePlans : saasPlans;
+  const currentPlan = getPlanConfig(centerSettings.currentPlanId, saasPlans);
 
   const usedStudents = students.filter((s) => s.status === 'active').length;
   const usedUsers = users.length;
-  const studentPct = Math.min(100, Math.round((usedStudents / currentPlan.maxStudents) * 100));
-  const userPct = Math.min(100, Math.round((usedUsers / currentPlan.maxUsers) * 100));
+  const studentPct = Math.min(100, Math.round((usedStudents / Math.max(1, currentPlan.maxStudents)) * 100));
+  const userPct = Math.min(100, Math.round((usedUsers / Math.max(1, currentPlan.maxUsers)) * 100));
 
   const nextRenewalDateLabel = (() => {
     const now = new Date();
@@ -1796,7 +1800,9 @@ export const SubscriptionScreen: React.FC = () => {
     return nextMonth.toLocaleDateString('en-GB');
   })();
 
-  const targetUpgradePlan = SUBSCRIPTION_PLANS.find((p) => p.id === upgradePlanId);
+  const targetUpgradePlan = availablePlans.find((p) => p.id === upgradePlanId) || null;
+  const activeCenterId = currentActor?.centerId || DEFAULT_CENTER_ID;
+  const centerSaasPayments = saasPayments.filter((p) => p.centerId === activeCenterId);
 
   return (
     <div className="space-y-6">
@@ -1931,9 +1937,9 @@ export const SubscriptionScreen: React.FC = () => {
         </div>
       </div>
 
-      {/* 3 Pricing Cards */}
+      {/* Dynamic Pricing Cards */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 items-stretch">
-        {SUBSCRIPTION_PLANS.map((plan) => {
+        {availablePlans.map((plan) => {
           const isCurrent = plan.id === centerSettings.currentPlanId;
           const displayPrice =
             billingCycle === 'monthly' ? plan.monthlyPrice : plan.monthlyPrice * 10;
@@ -2030,6 +2036,47 @@ export const SubscriptionScreen: React.FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-[#E2E8F0]">
+              {centerSaasPayments.map((sp) => (
+                <tr key={sp.id}>
+                  <td className="py-3 px-4 tabular-nums font-bold text-[#0F2A4A]">{sp.receiptNo}</td>
+                  <td className="py-3 px-4 tabular-nums text-xs">{sp.paidAt}</td>
+                  <td className="py-3 px-4 font-semibold">{sp.planName}</td>
+                  <td className="py-3 px-4 text-xs text-[#5B6B80]">{sp.method}</td>
+                  <td className="py-3 px-4 tabular-nums font-bold">{formatEGP(sp.amount)}</td>
+                  <td className="py-3 px-4">
+                    <StatusChip
+                      tone={
+                        sp.status === 'paid'
+                          ? 'success'
+                          : sp.status === 'failed'
+                          ? 'danger'
+                          : sp.status === 'refunded'
+                          ? 'neutral'
+                          : 'warning'
+                      }
+                      label={
+                        sp.status === 'paid'
+                          ? 'مدفوع'
+                          : sp.status === 'failed'
+                          ? 'فشل الدفع'
+                          : sp.status === 'refunded'
+                          ? 'مسترد'
+                          : 'قيد المراجعة'
+                      }
+                    />
+                  </td>
+                  <td className="py-3 px-4 text-left">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      icon={<Receipt className="w-4 h-4" />}
+                      onClick={() => showToast(`تم عرض فاتورة الاشتراك ${sp.receiptNo}`, 'info')}
+                    >
+                      عرض
+                    </Button>
+                  </td>
+                </tr>
+              ))}
               {BILLING_HISTORY.map((b) => (
                 <tr key={b.id}>
                   <td className="py-3 px-4 tabular-nums font-bold text-[#0F2A4A]">{b.receiptNo}</td>

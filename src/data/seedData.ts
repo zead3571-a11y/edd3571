@@ -29,8 +29,12 @@ import {
   OnlineExamAttempt,
   OutboxMessage,
   PaymentRecord,
+  PlatformSettings,
   RegistrationLead,
   Room,
+  SaasPaymentRecord,
+  SaasPlanConfig,
+  SaasSubscriptionRecord,
   ScheduledJobRunRecord,
   SettlementRecord,
   StaffAttendanceRecord,
@@ -46,6 +50,7 @@ import {
 } from '../types/eduflow';
 
 export const DEFAULT_CENTER_ID = 'center-hamed-elbailey';
+export const PLATFORM_CENTER_ID = 'platform';
 
 export const STAGES_LIST = [
   'الصف الرابع الابتدائي',
@@ -69,6 +74,10 @@ export const INITIAL_CENTERS: Center[] = [
     phone: '',
     stages: STAGES_LIST,
     currentPlanId: 'pro',
+    status: 'active',
+    ownerUserId: 'u-hamed',
+    ownerName: 'مسيو حامد البيلي',
+    ownerEmail: 'hamed@hamed-elbailey.demo',
     createdAt: '2026-11-16T00:00:00.000Z',
   },
 ];
@@ -330,8 +339,20 @@ export const INITIAL_TEMPLATES: MessageTemplate[] = [
   },
 ];
 
-// 10 Clean Accounts for "سنتر حامد البيلي" — salted SHA-256 hashes only, NO plaintext passwords stored
+// Platform Super Admin + 10 Clean Accounts for "سنتر حامد البيلي" — salted SHA-256 hashes only
 export const INITIAL_USERS: SystemUser[] = [
+  {
+    id: 'u-superadmin',
+    centerId: PLATFORM_CENTER_ID,
+    name: 'مدير منصة EDUFLOW',
+    email: 'superadmin@eduflow.eg',
+    phone: '01000000000',
+    role: UserRole.SUPER_ADMIN,
+    status: 'active',
+    salt: 'eduflow-platform-superadmin-salt',
+    passwordHash: '66ba8d8eb39a7b98e8a589adf23f6e4c8a81aa182f46ad7c7ffe7523b22c79c0',
+    failedAttempts: 0,
+  },
   {
     id: 'u-hamed',
     centerId: DEFAULT_CENTER_ID,
@@ -732,29 +753,105 @@ export const SUBSCRIPTION_PLANS = [
   },
 ];
 
-export function getPlanConfig(planId: CenterSettings['currentPlanId']) {
-  return SUBSCRIPTION_PLANS.find((p) => p.id === planId) || SUBSCRIPTION_PLANS[1];
+export function getPlanConfig(
+  planId: CenterSettings['currentPlanId'],
+  customPlans?: SaasPlanConfig[]
+) {
+  const pool = customPlans && customPlans.length > 0 ? customPlans : SUBSCRIPTION_PLANS;
+  return pool.find((p) => p.id === planId) || pool[1] || SUBSCRIPTION_PLANS[1];
 }
 
 export function isPlanFeatureEnabled(
   planId: CenterSettings['currentPlanId'],
   flag: keyof PlanFeatureFlags,
-  settings?: Pick<CenterSettings, 'planFeatureOverrides'>
+  settings?: Pick<CenterSettings, 'planFeatureOverrides'>,
+  customPlans?: SaasPlanConfig[]
 ): boolean {
   const overrideVal = settings?.planFeatureOverrides?.[planId]?.[flag as string];
   if (typeof overrideVal === 'boolean') {
     return overrideVal;
   }
-  const plan = getPlanConfig(planId);
+  const plan = getPlanConfig(planId, customPlans);
   return Boolean(plan.featureFlags[flag]);
 }
 
-export function isStudentPortalEnabled(settings: CenterSettings): boolean {
+export function isStudentPortalEnabled(
+  settings: CenterSettings,
+  customPlans?: SaasPlanConfig[]
+): boolean {
   return (
-    isPlanFeatureEnabled(settings.currentPlanId, 'studentPortal', settings) &&
+    isPlanFeatureEnabled(settings.currentPlanId, 'studentPortal', settings, customPlans) &&
     settings.studentPortalEnabled !== false
   );
 }
+
+export const INITIAL_SAAS_PLANS: SaasPlanConfig[] = SUBSCRIPTION_PLANS.map((p) => ({
+  id: p.id,
+  name: p.name,
+  subtitle: p.subtitle,
+  monthlyPrice: p.monthlyPrice,
+  annualMonthsCharged: 10,
+  maxStudents: p.maxStudents,
+  maxUsers: p.maxUsers,
+  maxGroups: p.featureFlags.maxGroups,
+  popular: 'popular' in p ? Boolean(p.popular) : false,
+  active: true,
+  featureFlags: { ...p.featureFlags },
+  features: p.features.map((f) => ({ ...f })),
+}));
+
+export const INITIAL_PLATFORM_SETTINGS: PlatformSettings = {
+  productName: 'EDUFLOW',
+  productTagline: 'نظام إدارة المراكز والسناتر التعليمية',
+  defaultLanguage: 'ar',
+  enabledLanguages: ['ar', 'en'],
+  currencyCode: 'EGP',
+  currencySymbol: 'ج',
+  defaultTrialDays: 14,
+  gracePeriodDays: 5,
+  allowSelfOnboarding: true,
+  supportEmail: 'support@eduflow.eg',
+  supportPhone: '01000000000',
+  maintenanceMode: false,
+};
+
+export const INITIAL_SAAS_SUBSCRIPTIONS: SaasSubscriptionRecord[] = [
+  {
+    id: 'sub-hamed-elbailey',
+    centerId: DEFAULT_CENTER_ID,
+    centerName: 'سنتر حامد البيلي',
+    planId: 'pro',
+    planName: 'الباقة الاحترافية',
+    status: 'active',
+    billingCycle: 'monthly',
+    monthlyAmount: 2800,
+    currentPeriodStart: '2026-11-01',
+    currentPeriodEnd: '2026-12-01',
+    nextBillingDate: '2026-12-01',
+    autoRenew: true,
+    overdueAmount: 0,
+    updatedAt: '2026-11-16T00:00:00.000Z',
+  },
+];
+
+export const INITIAL_SAAS_PAYMENTS: SaasPaymentRecord[] = [
+  {
+    id: 'spay-hamed-nov-2026',
+    centerId: DEFAULT_CENTER_ID,
+    centerName: 'سنتر حامد البيلي',
+    subscriptionId: 'sub-hamed-elbailey',
+    receiptNo: 'SAAS-2026-1101',
+    planId: 'pro',
+    planName: 'الباقة الاحترافية',
+    billingCycle: 'monthly',
+    amount: 2800,
+    method: 'إنستاباي',
+    status: 'paid',
+    paidAt: '2026-11-01',
+    periodLabel: 'نوفمبر 2026',
+    recordedBy: 'مدير منصة EDUFLOW',
+  },
+];
 
 export const BILLING_HISTORY: {
   id: string;
@@ -765,3 +862,4 @@ export const BILLING_HISTORY: {
   status: 'paid';
   receiptNo: string;
 }[] = [];
+
